@@ -3,25 +3,63 @@
 @tailwind utilities;
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --scope-bg: #0c0f14;
+  --scope-grid: rgba(100, 120, 140, 0.06);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+/* Scope-glass dark background */
+.bg-scope {
+  background-color: var(--scope-bg);
+  background-image:
+    radial-gradient(ellipse at 50% 0%, rgba(34, 211, 238, 0.03) 0%, transparent 60%);
+}
+
+/* Faint graticule grid overlay */
+.graticule {
+  background-image:
+    linear-gradient(var(--scope-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--scope-grid) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* Panel glass effect */
+.panel-card {
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.03),
+    0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+/* Scrollbar */
+.scrollbar-thin::-webkit-scrollbar {
+  width: 4px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: rgba(161, 161, 170, 0.2);
+  border-radius: 2px;
+}
+
+/* Focus visible */
+*:focus-visible {
+  outline: 2px solid #34d399;
+  outline-offset: 2px;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }
 
-body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+/* Audio player compact styling */
+audio {
+  height: 24px;
 }
-
-@layer utilities {
-  .text-balance {
-    text-wrap: balance;
-  }
+audio::-webkit-media-controls-panel {
+  background: rgba(39, 39, 42, 0.8);
 }

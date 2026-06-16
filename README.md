@@ -1,36 +1,64 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Revenant
 
-## Getting Started
+An honest field instrument that turns a phone into an environmental sensor readout. It reads the device's **real sensors** and flags readings that break sharply from their own settled baseline. It never synthesizes or randomizes data, and never claims to detect the paranormal.
 
-First, run the development server:
+## What it measures
+
+| Channel | Sensor | Unit | API |
+|---------|--------|------|-----|
+| **EMF** | Magnetometer | uT (magnitude) | Generic Sensor API (Chromium only) |
+| **Sound** | Microphone | dBFS (RMS) + live spectrum | Web Audio AnalyserNode |
+| **Motion** | Accelerometer + Gyroscope | m/s^2 + deg/s | DeviceMotion |
+
+## Anomaly detection
+
+Each channel keeps a rolling window of its own recent samples and derives mean + sample stddev. An event fires when `|reading - mean| / stddev >= threshold` (approx 4 sigma for EMF/sound, 4.5 sigma for motion). Samples are scored **before** insertion so spikes don't dilute the baseline. A warmup period of ~60 samples and a 1.5s cooldown between events prevent false positives and repeated logging.
+
+## Platform support
+
+- **Magnetometer**: Chrome/Edge on Android over HTTPS only. iOS Safari does not expose the Generic Sensor API. The panel shows a clear "no channel" message with guidance.
+- **Microphone**: Works on iOS + Android. Requires user tap to grant permission.
+- **Motion**: Works broadly. iOS 13+ requires `DeviceMotionEvent.requestPermission()` from a user gesture.
+- **All sensors require HTTPS** (secure context).
+
+## Local development
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://localhost:3000`. Note: sensors won't work over plain HTTP on a phone. For device testing, either:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. **Deploy to Vercel** (recommended) and open the URL on your phone
+2. **Tunnel localhost** with ngrok: `ngrok http 3000`, then open the HTTPS URL on device
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Deploy to Vercel
 
-## Learn More
+```bash
+npx vercel
+```
 
-To learn more about Next.js, take a look at the following resources:
+Or connect the repo to Vercel for automatic deployments. The app works with zero configuration — sessions are stored in memory by default.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Optional: Postgres persistence
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+To persist sessions across deploys, add a Vercel Postgres database:
 
-## Deploy on Vercel
+1. In the Vercel dashboard, add a Postgres store to your project
+2. The `POSTGRES_URL` env var is set automatically
+3. The app detects it and switches from in-memory to Postgres — no code changes needed
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Schema is created automatically on first request.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Stack
+
+- Next.js 14 (App Router)
+- TypeScript
+- Tailwind CSS
+- Web Sensor APIs
+- Vercel (deploy target)
+
+## Design philosophy
+
+This is a **real instrument**, not a spooky toy. Gimmicky apps fake readings with random numbers — this one refuses to. If a sensor isn't available, the panel says so plainly instead of inventing a number.
