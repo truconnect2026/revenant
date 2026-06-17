@@ -9,11 +9,12 @@ const WARMUP = 60;
 const THRESHOLD = 4.5;
 const COOLDOWN_MS = 1500;
 const HISTORY_LEN = 80;
+const POST_TRIP_SKIP = 5;
 
 export function useMotion(
   active: boolean,
   onEvent: (e: AnomalyEvent) => void
-): SensorReading & { enable: () => Promise<void> } {
+): SensorReading & { enable: () => Promise<void>; recalibrate: () => void } {
   const [status, setStatus] = useState<SensorStatus>("standby");
   const [value, setValue] = useState<number | null>(null);
   const [secondaryValue, setSecondaryValue] = useState<number | null>(null);
@@ -21,10 +22,12 @@ export function useMotion(
   const [mean, setMean] = useState(0);
   const [stddev, setStddev] = useState(0);
   const [history, setHistory] = useState<number[]>([]);
+  const [warmupProgress, setWarmupProgress] = useState(0);
 
   const baselineRef = useRef(new RollingBaseline(WINDOW_SIZE, WARMUP));
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastTripRef = useRef(0);
+  const skipCountRef = useRef(0);
   const historyRef = useRef<number[]>([]);
   const onEventRef = useRef(onEvent);
   onEventRef.current = onEvent;
@@ -34,7 +37,6 @@ export function useMotion(
   const listenerRef = useRef<((e: DeviceMotionEvent) => void) | null>(null);
 
   const enable = useCallback(async () => {
-    // iOS 13+ requires permission request from a user gesture
     const dme = DeviceMotionEvent as unknown as {
       requestPermission?: () => Promise<string>;
     };
@@ -63,6 +65,18 @@ export function useMotion(
     baselineRef.current.reset();
   }, []);
 
+  const recalibrate = useCallback(() => {
+    historyRef.current = [];
+    skipCountRef.current = 0;
+    baselineRef.current.reset();
+    setHistory([]);
+    setSigma(0);
+    setMean(0);
+    setStddev(0);
+    setWarmupProgress(0);
+    setStatus("settling");
+  }, []);
+
   // Sampling interval
   useEffect(() => {
     if (!active || status === "standby" || status === "no-channel" || status === "blocked") {
@@ -70,6 +84,8 @@ export function useMotion(
     }
 
     intervalRef.current = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+
       const a = latestAccel.current;
       if (!a) return;
 
@@ -85,6 +101,7 @@ export function useMotion(
         const now = Date.now();
         if (s >= THRESHOLD && now - lastTripRef.current > COOLDOWN_MS) {
           lastTripRef.current = now;
+          skipCountRef.current = POST_TRIP_SKIP;
           onEventRef.current({
             id: crypto.randomUUID(),
             channel: "motion",
@@ -98,12 +115,18 @@ export function useMotion(
         }
       }
 
-      baseline.push(accelMag);
+      if (skipCountRef.current > 0) {
+        skipCountRef.current--;
+      } else {
+        baseline.push(accelMag);
+      }
+
       setValue(Math.round(accelMag * 100) / 100);
       setSecondaryValue(Math.round(rotMag * 10) / 10);
       setSigma(Math.round(s * 100) / 100);
       setMean(Math.round(baseline.mean * 100) / 100);
       setStddev(Math.round(baseline.stddev * 100) / 100);
+      setWarmupProgress(baseline.isWarmedUp ? 1 : Math.min(baseline.sampleCount / WARMUP, 1));
 
       historyRef.current = [...historyRef.current.slice(-(HISTORY_LEN - 1)), accelMag];
       setHistory(historyRef.current);
@@ -125,6 +148,7 @@ export function useMotion(
       latestAccel.current = null;
       latestRotation.current = null;
       historyRef.current = [];
+      skipCountRef.current = 0;
       baselineRef.current.reset();
       setValue(null);
       setSecondaryValue(null);
@@ -132,6 +156,7 @@ export function useMotion(
       setMean(0);
       setStddev(0);
       setHistory([]);
+      setWarmupProgress(0);
       setStatus("standby");
     }
   }, [active]);
@@ -156,6 +181,8 @@ export function useMotion(
     stddev,
     history,
     threshold: THRESHOLD,
+    warmupProgress,
     enable,
+    recalibrate,
   };
 }

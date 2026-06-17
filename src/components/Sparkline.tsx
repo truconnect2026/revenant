@@ -2,21 +2,22 @@
 
 interface SparklineProps {
   data: number[];
-  width?: number;
-  height?: number;
   color?: string;
+  height?: number;
 }
 
-export function Sparkline({
-  data,
-  width = 240,
-  height = 48,
-  color = "#34d399",
-}: SparklineProps) {
+const VB_W = 240;
+
+export function Sparkline({ data, color = "#34d399", height = 48 }: SparklineProps) {
   if (data.length < 2) {
     return (
-      <svg width={width} height={height} className="opacity-30">
-        <line x1={0} y1={height / 2} x2={width} y2={height / 2} stroke={color} strokeWidth={1} opacity={0.3} />
+      <svg
+        viewBox={`0 0 ${VB_W} ${height}`}
+        preserveAspectRatio="none"
+        className="w-full opacity-30"
+        style={{ height }}
+      >
+        <line x1={0} y1={height / 2} x2={VB_W} y2={height / 2} stroke={color} strokeWidth={1} opacity={0.3} />
       </svg>
     );
   }
@@ -28,7 +29,7 @@ export function Sparkline({
 
   const points = data
     .map((v, i) => {
-      const x = (i / (data.length - 1)) * width;
+      const x = (i / (data.length - 1)) * VB_W;
       const y = pad + ((max - v) / range) * (height - pad * 2);
       return `${x},${y}`;
     })
@@ -36,27 +37,24 @@ export function Sparkline({
 
   return (
     <svg
-      width={width}
-      height={height}
-      className="motion-safe:transition-all"
+      viewBox={`0 0 ${VB_W} ${height}`}
+      preserveAspectRatio="none"
+      className="w-full motion-safe:transition-all"
+      style={{ height }}
       role="img"
       aria-label="Signal trace"
     >
-      {/* Faint graticule lines */}
       {[0.25, 0.5, 0.75].map((f) => (
         <line
           key={f}
-          x1={0}
-          y1={height * f}
-          x2={width}
-          y2={height * f}
+          x1={0} y1={height * f}
+          x2={VB_W} y2={height * f}
           stroke="currentColor"
           className="text-zinc-700"
           strokeWidth={0.5}
           strokeDasharray="2,4"
         />
       ))}
-      {/* Signal trace with phosphor glow */}
       <polyline
         points={points}
         fill="none"

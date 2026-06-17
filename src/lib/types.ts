@@ -38,4 +38,5 @@ export interface SensorReading {
   history: number[];
   spectrum?: number[];
   threshold: number;
+  warmupProgress: number; // 0–1; reaches 1 when baseline is ready
 }

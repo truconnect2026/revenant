@@ -24,7 +24,10 @@ export function SensorPanel({
   noChannelMessage,
   running = false,
 }: SensorPanelProps) {
-  const { status, value, secondaryValue, unit, secondaryUnit, sigma, mean, stddev, history, spectrum, threshold } = reading;
+  const {
+    status, value, secondaryValue, unit, secondaryUnit,
+    sigma, mean, stddev, history, spectrum, threshold, warmupProgress,
+  } = reading;
 
   return (
     <div className="panel-card rounded-lg border border-zinc-600/60 bg-zinc-800/60 backdrop-blur p-4 flex flex-col gap-3 h-full">
@@ -48,13 +51,13 @@ export function SensorPanel({
       {status === "blocked" && (
         <div className="flex-1 bg-zinc-700/50 border border-zinc-600/40 rounded p-3 text-xs text-zinc-400 leading-relaxed">
           <p className="font-semibold text-red-400 mb-1">Permission denied</p>
-          <p>Grant sensor access in your browser settings, then tap Enable.</p>
+          <p>Grant sensor access in your browser settings, then retry.</p>
           {onEnable && (
             <button
               onClick={onEnable}
-              className="mt-2 px-3 py-1.5 text-[10px] font-mono uppercase font-semibold bg-emerald-700 hover:bg-emerald-600 text-white rounded transition-colors"
+              className="mt-3 px-3 py-1.5 text-[10px] font-mono uppercase font-semibold bg-emerald-700 hover:bg-emerald-600 text-white rounded transition-colors"
             >
-              Enable
+              Retry
             </button>
           )}
         </div>
@@ -79,6 +82,22 @@ export function SensorPanel({
             <span>µ={mean}</span>
             <span>σ={stddev}</span>
           </div>
+
+          {/* Warmup progress bar — shown while baseline is settling */}
+          {status === "settling" && warmupProgress < 1 && (
+            <div className="flex flex-col gap-1">
+              <div className="flex justify-between text-[10px] font-mono">
+                <span className="text-amber-400/80">Calibrating baseline</span>
+                <span className="text-amber-400/60">{Math.round(warmupProgress * 100)}%</span>
+              </div>
+              <div className="h-1 bg-zinc-700/60 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-amber-400/70 rounded-full transition-all duration-150"
+                  style={{ width: `${warmupProgress * 100}%` }}
+                />
+              </div>
+            </div>
+          )}
 
           {/* Sparkline */}
           <Sparkline data={history} color={color} />

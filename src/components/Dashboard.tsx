@@ -1,22 +1,36 @@
 "use client";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AnomalyEvent, SessionData } from "@/lib/types";
+import { loadSessions, saveSession } from "@/lib/storage";
 import { useMagnetometer } from "@/hooks/useMagnetometer";
 import { useMicrophone } from "@/hooks/useMicrophone";
 import { useMotion } from "@/hooks/useMotion";
 import { useGeolocation } from "@/hooks/useGeolocation";
 import { SensorPanel } from "./SensorPanel";
 import { EventLog } from "./EventLog";
+import { SessionHistory } from "./SessionHistory";
+
+const MAX_EVENTS = 200;
 
 export function Dashboard() {
   const [running, setRunning] = useState(false);
   const [events, setEvents] = useState<AnomalyEvent[]>([]);
   const [sessionLabel, setSessionLabel] = useState("");
+  const [pastSessions, setPastSessions] = useState<SessionData[]>([]);
   const sessionIdRef = useRef<string>("");
   const startedAtRef = useRef<number>(0);
 
+  // Load past sessions from localStorage on first render
+  useEffect(() => {
+    setPastSessions(loadSessions());
+  }, []);
+
   const addEvent = useCallback((ev: AnomalyEvent) => {
-    setEvents((prev) => [...prev, ev]);
+    setEvents((prev) => {
+      const next = [...prev, ev];
+      // Cap to prevent unbounded memory growth on long sessions
+      return next.length > MAX_EVENTS ? next.slice(-MAX_EVENTS) : next;
+    });
   }, []);
 
   const emf = useMagnetometer(running, addEvent);
@@ -34,7 +48,8 @@ export function Dashboard() {
     emf.enable();
     const soundP = sound.enable();
     const motionP = motion.enable();
-    await Promise.all([soundP, motionP]);
+    // Ignore individual sensor failures — a blocked channel shows its own card
+    await Promise.all([soundP, motionP]).catch(() => {});
 
     setRunning(true);
   };
@@ -51,6 +66,11 @@ export function Dashboard() {
       events,
     };
 
+    // Persist locally
+    saveSession(session);
+    setPastSessions(loadSessions());
+
+    // Optional server sync when Postgres is configured
     try {
       await fetch("/api/sessions", {
         method: "POST",
@@ -58,8 +78,15 @@ export function Dashboard() {
         body: JSON.stringify(session),
       });
     } catch {
-      // Offline — session was captured in events state already
+      // Offline or no Postgres — already saved to localStorage
     }
+  };
+
+  const handleRecalibrate = () => {
+    setEvents([]);
+    emf.recalibrate();
+    sound.recalibrate();
+    motion.recalibrate();
   };
 
   return (
@@ -78,15 +105,24 @@ export function Dashboard() {
               Environmental Sensor Readout
             </p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 flex-wrap justify-end">
             {!running && (
               <input
                 type="text"
                 placeholder="Session label (optional)"
                 value={sessionLabel}
                 onChange={(e) => setSessionLabel(e.target.value)}
-                className="bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-xs font-mono text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 w-48"
+                className="bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-xs font-mono text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 w-44"
               />
+            )}
+            {running && (
+              <button
+                onClick={handleRecalibrate}
+                className="px-3 py-2 text-xs font-mono uppercase font-semibold rounded border border-zinc-600 text-zinc-400 hover:text-zinc-200 hover:border-zinc-500 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500"
+                title="Clear events and re-establish baselines"
+              >
+                Recalibrate
+              </button>
             )}
             <button
               onClick={running ? stopSession : startSession}
@@ -109,7 +145,7 @@ export function Dashboard() {
         )}
 
         {/* Sensor Panels */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6 items-stretch">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6 items-stretch">
           <SensorPanel
             title="EMF"
             channelId="magnetometer"
@@ -144,6 +180,9 @@ export function Dashboard() {
           </h2>
           <EventLog events={events} className="flex-1 min-h-[5rem]" />
         </section>
+
+        {/* Past sessions — only visible when not running */}
+        {!running && <SessionHistory sessions={pastSessions} />}
 
         {/* Footer */}
         <footer className="mt-6 text-center text-[10px] font-mono text-zinc-600">

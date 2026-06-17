@@ -6,11 +6,10 @@ import { AnomalyEvent, SensorReading, SensorStatus } from "@/lib/types";
 const SAMPLE_HZ = 20;
 const WINDOW_SIZE = 200;
 const WARMUP = 60;
-// Threshold lowered from 4 to 3: EMA smoothing reduces σ substantially
-// (raw dBFS over 5ms windows has σ≈15, making 4σ unreachable at 0dBFS cap).
-// After EMA the effective σ drops to ~3-6 dBFS, putting 3σ in clap/voice range.
+// Threshold at 3: after EMA smoothing σ≈3–6 dBFS, putting 3σ in clap/voice range
 const THRESHOLD = 3;
-const EMA_ALPHA = 0.3; // ~150ms time constant at 20Hz; smooths transients without dulling events
+const EMA_ALPHA = 0.3; // ~150ms time constant at 20Hz
+const POST_TRIP_SKIP = 5; // skip pushing spike samples to baseline after a trip
 const COOLDOWN_MS = 1500;
 const HISTORY_LEN = 80;
 const FFT_SIZE = 256;
@@ -24,7 +23,7 @@ function rmsToDbfs(rms: number): number {
 export function useMicrophone(
   active: boolean,
   onEvent: (e: AnomalyEvent) => void
-): SensorReading & { enable: () => Promise<void> } {
+): SensorReading & { enable: () => Promise<void>; recalibrate: () => void } {
   const [status, setStatus] = useState<SensorStatus>("standby");
   const [value, setValue] = useState<number | null>(null);
   const [sigma, setSigma] = useState(0);
@@ -32,10 +31,12 @@ export function useMicrophone(
   const [stddev, setStddev] = useState(0);
   const [history, setHistory] = useState<number[]>([]);
   const [spectrum, setSpectrum] = useState<number[]>([]);
+  const [warmupProgress, setWarmupProgress] = useState(0);
 
   const baselineRef = useRef(new RollingBaseline(WINDOW_SIZE, WARMUP));
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastTripRef = useRef(0);
+  const skipCountRef = useRef(0);
   const historyRef = useRef<number[]>([]);
   const emaRef = useRef<number | null>(null);
   const onEventRef = useRef(onEvent);
@@ -63,6 +64,20 @@ export function useMicrophone(
     } catch {
       setStatus("blocked");
     }
+  }, []);
+
+  const recalibrate = useCallback(() => {
+    historyRef.current = [];
+    skipCountRef.current = 0;
+    emaRef.current = null;
+    baselineRef.current.reset();
+    setHistory([]);
+    setSpectrum([]);
+    setSigma(0);
+    setMean(0);
+    setStddev(0);
+    setWarmupProgress(0);
+    setStatus("settling");
   }, []);
 
   const recordClip = useCallback((): Promise<string | undefined> => {
@@ -94,6 +109,21 @@ export function useMicrophone(
     });
   }, []);
 
+  // Suspend/resume AudioContext when page is backgrounded (iOS battery / proper suspension)
+  useEffect(() => {
+    if (!active) return;
+    const handleVisibility = () => {
+      if (!ctxRef.current) return;
+      if (document.visibilityState === "hidden") {
+        ctxRef.current.suspend().catch(() => {});
+      } else {
+        ctxRef.current.resume().catch(() => {});
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [active]);
+
   // Sampling interval
   useEffect(() => {
     if (!active || status === "standby" || status === "no-channel" || status === "blocked") {
@@ -104,23 +134,23 @@ export function useMicrophone(
     const freqData = new Uint8Array(FFT_SIZE / 2);
 
     intervalRef.current = setInterval(() => {
+      // Skip while backgrounded — prevents stale/zero data poisoning the baseline
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+
       const analyser = analyserRef.current;
       if (!analyser) return;
 
       analyser.getFloatTimeDomainData(timeDomain);
       analyser.getByteFrequencyData(freqData);
 
-      // RMS over the current frame
       let sumSq = 0;
-      for (let i = 0; i < timeDomain.length; i++) {
-        sumSq += timeDomain[i] * timeDomain[i];
-      }
+      for (let i = 0; i < timeDomain.length; i++) sumSq += timeDomain[i] * timeDomain[i];
       const rms = Math.sqrt(sumSq / timeDomain.length);
       const rawDbfs = rmsToDbfs(rms);
 
       // EMA smoothing — kills fast-fluctuation variance so σ is actionable.
-      // Raw 5ms frames give σ≈15 dBFS (4σ = +10 dBFS, above 0 dBFS cap).
-      // After EMA with α=0.3, σ drops ~3–6 dBFS, making 3σ reachable on events.
+      // Raw 5ms frames give σ≈15 dBFS (4σ unreachable at 0 dBFS cap).
+      // After EMA α=0.3, σ drops to ~3–6 dBFS, making 3σ reachable on events.
       if (emaRef.current === null) emaRef.current = rawDbfs;
       emaRef.current = EMA_ALPHA * rawDbfs + (1 - EMA_ALPHA) * emaRef.current;
       const dbfs = emaRef.current;
@@ -133,6 +163,7 @@ export function useMicrophone(
         const now = Date.now();
         if (s >= THRESHOLD && now - lastTripRef.current > COOLDOWN_MS) {
           lastTripRef.current = now;
+          skipCountRef.current = POST_TRIP_SKIP;
           const eventBase = {
             id: crypto.randomUUID(),
             channel: "sound" as const,
@@ -149,16 +180,20 @@ export function useMicrophone(
         }
       }
 
-      baseline.push(dbfs);
+      if (skipCountRef.current > 0) {
+        skipCountRef.current--;
+      } else {
+        baseline.push(dbfs);
+      }
+
       setValue(Math.round(dbfs * 10) / 10);
       setSigma(Math.round(s * 100) / 100);
       setMean(Math.round(baseline.mean * 10) / 10);
       setStddev(Math.round(baseline.stddev * 10) / 10);
+      setWarmupProgress(baseline.isWarmedUp ? 1 : Math.min(baseline.sampleCount / WARMUP, 1));
 
       historyRef.current = [...historyRef.current.slice(-(HISTORY_LEN - 1)), dbfs];
       setHistory(historyRef.current);
-
-      // Spectrum: normalize 0-255 to 0-1
       setSpectrum(Array.from(freqData).map((v) => v / 255));
     }, 1000 / SAMPLE_HZ);
 
@@ -179,6 +214,7 @@ export function useMicrophone(
       analyserRef.current = null;
       emaRef.current = null;
       historyRef.current = [];
+      skipCountRef.current = 0;
       baselineRef.current.reset();
       setValue(null);
       setSigma(0);
@@ -186,6 +222,7 @@ export function useMicrophone(
       setStddev(0);
       setHistory([]);
       setSpectrum([]);
+      setWarmupProgress(0);
       setStatus("standby");
     }
   }, [active]);
@@ -209,6 +246,8 @@ export function useMicrophone(
     history,
     spectrum,
     threshold: THRESHOLD,
+    warmupProgress,
     enable,
+    recalibrate,
   };
 }

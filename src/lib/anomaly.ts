@@ -22,6 +22,10 @@ export class RollingBaseline {
     return this.count >= this.warmup;
   }
 
+  get sampleCount(): number {
+    return this.count;
+  }
+
   get mean(): number {
     if (this.count === 0) return 0;
     const n = Math.min(this.count, this.size);
