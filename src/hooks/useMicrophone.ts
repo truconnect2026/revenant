@@ -6,7 +6,11 @@ import { AnomalyEvent, SensorReading, SensorStatus } from "@/lib/types";
 const SAMPLE_HZ = 20;
 const WINDOW_SIZE = 200;
 const WARMUP = 60;
-const THRESHOLD = 4;
+// Threshold lowered from 4 to 3: EMA smoothing reduces σ substantially
+// (raw dBFS over 5ms windows has σ≈15, making 4σ unreachable at 0dBFS cap).
+// After EMA the effective σ drops to ~3-6 dBFS, putting 3σ in clap/voice range.
+const THRESHOLD = 3;
+const EMA_ALPHA = 0.3; // ~150ms time constant at 20Hz; smooths transients without dulling events
 const COOLDOWN_MS = 1500;
 const HISTORY_LEN = 80;
 const FFT_SIZE = 256;
@@ -33,6 +37,7 @@ export function useMicrophone(
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastTripRef = useRef(0);
   const historyRef = useRef<number[]>([]);
+  const emaRef = useRef<number | null>(null);
   const onEventRef = useRef(onEvent);
   onEventRef.current = onEvent;
 
@@ -105,13 +110,20 @@ export function useMicrophone(
       analyser.getFloatTimeDomainData(timeDomain);
       analyser.getByteFrequencyData(freqData);
 
-      // RMS
+      // RMS over the current frame
       let sumSq = 0;
       for (let i = 0; i < timeDomain.length; i++) {
         sumSq += timeDomain[i] * timeDomain[i];
       }
       const rms = Math.sqrt(sumSq / timeDomain.length);
-      const dbfs = rmsToDbfs(rms);
+      const rawDbfs = rmsToDbfs(rms);
+
+      // EMA smoothing — kills fast-fluctuation variance so σ is actionable.
+      // Raw 5ms frames give σ≈15 dBFS (4σ = +10 dBFS, above 0 dBFS cap).
+      // After EMA with α=0.3, σ drops ~3–6 dBFS, making 3σ reachable on events.
+      if (emaRef.current === null) emaRef.current = rawDbfs;
+      emaRef.current = EMA_ALPHA * rawDbfs + (1 - EMA_ALPHA) * emaRef.current;
+      const dbfs = emaRef.current;
 
       const baseline = baselineRef.current;
       const s = baseline.score(dbfs);
@@ -121,7 +133,6 @@ export function useMicrophone(
         const now = Date.now();
         if (s >= THRESHOLD && now - lastTripRef.current > COOLDOWN_MS) {
           lastTripRef.current = now;
-          // Fire event, record clip in background
           const eventBase = {
             id: crypto.randomUUID(),
             channel: "sound" as const,
@@ -156,7 +167,7 @@ export function useMicrophone(
     };
   }, [active, status, recordClip]);
 
-  // Cleanup
+  // Stop + reset all state on session end
   useEffect(() => {
     if (!active) {
       if (intervalRef.current) clearInterval(intervalRef.current);
@@ -166,6 +177,15 @@ export function useMicrophone(
       streamRef.current?.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
       analyserRef.current = null;
+      emaRef.current = null;
+      historyRef.current = [];
+      baselineRef.current.reset();
+      setValue(null);
+      setSigma(0);
+      setMean(0);
+      setStddev(0);
+      setHistory([]);
+      setSpectrum([]);
       setStatus("standby");
     }
   }, [active]);

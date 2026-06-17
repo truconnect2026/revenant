@@ -89,7 +89,7 @@ export function useMotion(
             id: crypto.randomUUID(),
             channel: "motion",
             value: Math.round(accelMag * 100) / 100,
-            unit: "m/s\u00B2",
+            unit: "m/s²",
             sigma: Math.round(s * 100) / 100,
             mean: Math.round(baseline.mean * 100) / 100,
             stddev: Math.round(baseline.stddev * 100) / 100,
@@ -114,7 +114,7 @@ export function useMotion(
     };
   }, [active, status]);
 
-  // Cleanup
+  // Stop + reset all state on session end
   useEffect(() => {
     if (!active) {
       if (intervalRef.current) clearInterval(intervalRef.current);
@@ -122,6 +122,16 @@ export function useMotion(
         window.removeEventListener("devicemotion", listenerRef.current);
         listenerRef.current = null;
       }
+      latestAccel.current = null;
+      latestRotation.current = null;
+      historyRef.current = [];
+      baselineRef.current.reset();
+      setValue(null);
+      setSecondaryValue(null);
+      setSigma(0);
+      setMean(0);
+      setStddev(0);
+      setHistory([]);
       setStatus("standby");
     }
   }, [active]);
@@ -139,8 +149,8 @@ export function useMotion(
     status,
     value,
     secondaryValue,
-    unit: "m/s\u00B2",
-    secondaryUnit: "\u00B0/s",
+    unit: "m/s²",
+    secondaryUnit: "°/s",
     sigma,
     mean,
     stddev,

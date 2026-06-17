@@ -104,12 +104,22 @@ export function useMagnetometer(
     };
   }, [active, status]);
 
-  // Cleanup on unmount or stop
+  // Stop + reset all state on session end
   useEffect(() => {
-    if (!active && sensorRef.current) {
-      sensorRef.current.stop();
-      sensorRef.current = null;
+    if (!active) {
+      if (sensorRef.current) {
+        sensorRef.current.stop();
+        sensorRef.current = null;
+      }
       if (intervalRef.current) clearInterval(intervalRef.current);
+      latestReading.current = null;
+      historyRef.current = [];
+      baselineRef.current.reset();
+      setValue(null);
+      setSigma(0);
+      setMean(0);
+      setStddev(0);
+      setHistory([]);
       setStatus("standby");
     }
   }, [active]);
@@ -124,7 +134,7 @@ export function useMagnetometer(
   return {
     status: available ? status : "no-channel",
     value,
-    unit: "\u00B5T",
+    unit: "µT",
     sigma,
     mean,
     stddev,

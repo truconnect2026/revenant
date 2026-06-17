@@ -12,6 +12,7 @@ interface SensorPanelProps {
   onEnable?: () => void;
   color?: string;
   noChannelMessage?: string;
+  running?: boolean;
 }
 
 export function SensorPanel({
@@ -21,6 +22,7 @@ export function SensorPanel({
   onEnable,
   color = "#34d399",
   noChannelMessage,
+  running = false,
 }: SensorPanelProps) {
   const { status, value, secondaryValue, unit, secondaryUnit, sigma, mean, stddev, history, spectrum, threshold } = reading;
 
@@ -87,7 +89,7 @@ export function SensorPanel({
           {/* Deviation meter + enable button pushed to bottom */}
           <div className="mt-auto flex flex-col gap-2">
             <DeviationMeter sigma={sigma} threshold={threshold} />
-            {status === "standby" && onEnable && (
+            {status === "standby" && !running && onEnable && (
               <button
                 onClick={onEnable}
                 className="self-start px-4 py-2 text-xs font-mono uppercase font-semibold bg-emerald-700 hover:bg-emerald-600 text-white rounded transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"

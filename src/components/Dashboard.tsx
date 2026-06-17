@@ -29,10 +29,12 @@ export function Dashboard() {
     startedAtRef.current = Date.now();
     setEvents([]);
 
-    // Enable sensors — these are user-gesture-triggered
+    // Call all enable()s synchronously before any await so the user-gesture
+    // context covers DeviceMotionEvent.requestPermission() on iOS.
     emf.enable();
-    await sound.enable();
-    await motion.enable();
+    const soundP = sound.enable();
+    const motionP = motion.enable();
+    await Promise.all([soundP, motionP]);
 
     setRunning(true);
   };
@@ -114,6 +116,7 @@ export function Dashboard() {
             reading={emf}
             onEnable={emf.enable}
             color="#22d3ee"
+            running={running}
             noChannelMessage="Magnetometer is not exposed by this browser. Available in Chrome/Edge on Android over HTTPS. On iPhone, pair an external Bluetooth magnetometer via a native app."
           />
           <SensorPanel
@@ -122,6 +125,7 @@ export function Dashboard() {
             reading={sound}
             onEnable={sound.enable}
             color="#34d399"
+            running={running}
           />
           <SensorPanel
             title="Motion"
@@ -129,6 +133,7 @@ export function Dashboard() {
             reading={motion}
             onEnable={motion.enable}
             color="#fbbf24"
+            running={running}
           />
         </div>
 
