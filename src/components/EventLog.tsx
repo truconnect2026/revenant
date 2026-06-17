@@ -18,17 +18,17 @@ function formatTime(ts: number): string {
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
-export function EventLog({ events }: { events: AnomalyEvent[] }) {
+export function EventLog({ events, className = "" }: { events: AnomalyEvent[]; className?: string }) {
   if (events.length === 0) {
     return (
-      <div className="text-center text-xs font-mono text-zinc-600 py-4">
+      <div className={`flex items-center justify-center text-xs font-mono text-zinc-600 ${className}`}>
         No anomaly events recorded.
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col gap-1 max-h-64 overflow-y-auto scrollbar-thin">
+    <div className={`flex flex-col gap-1 overflow-y-auto scrollbar-thin ${className}`}>
       {[...events].reverse().map((ev) => (
         <div
           key={ev.id}

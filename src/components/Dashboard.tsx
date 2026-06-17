@@ -61,11 +61,11 @@ export function Dashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-scope text-zinc-100">
+    <div className="min-h-screen bg-scope text-zinc-100 flex flex-col">
       {/* Graticule overlay */}
       <div className="graticule fixed inset-0 pointer-events-none z-0" />
 
-      <div className="relative z-10 max-w-4xl mx-auto px-4 py-6">
+      <div className="relative z-10 max-w-7xl w-full mx-auto px-4 py-6 flex flex-col flex-1">
         {/* Header */}
         <header className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
           <div>
@@ -73,7 +73,7 @@ export function Dashboard() {
               REVENANT
             </h1>
             <p className="text-[11px] font-mono text-zinc-500 mt-0.5">
-              Environmental Sensor Readout &middot; Real Data Only
+              Environmental Sensor Readout
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -107,7 +107,7 @@ export function Dashboard() {
         )}
 
         {/* Sensor Panels */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6 items-stretch">
           <SensorPanel
             title="EMF"
             channelId="magnetometer"
@@ -132,16 +132,16 @@ export function Dashboard() {
           />
         </div>
 
-        {/* Event Log */}
-        <section>
+        {/* Event Log — fills remaining viewport height */}
+        <section className="flex flex-col flex-1 min-h-0 mb-0">
           <h2 className="font-display text-sm font-semibold uppercase tracking-wider text-zinc-400 mb-2">
             Event Log
           </h2>
-          <EventLog events={events} />
+          <EventLog events={events} className="flex-1 min-h-[5rem]" />
         </section>
 
         {/* Footer */}
-        <footer className="mt-8 text-center text-[10px] font-mono text-zinc-600">
+        <footer className="mt-6 text-center text-[10px] font-mono text-zinc-600">
           Revenant reads real device sensors. It does not synthesize, randomize, or simulate data.
           <br />
           It does not detect the paranormal. It reports environmental deviation from baseline.

@@ -2,11 +2,11 @@
 import { SensorStatus } from "@/lib/types";
 
 const STATUS_CONFIG: Record<SensorStatus, { color: string; label: string; pulse: boolean }> = {
-  standby: { color: "bg-zinc-600", label: "STANDBY", pulse: false },
-  settling: { color: "bg-amber-500", label: "SETTLING", pulse: true },
-  live: { color: "bg-emerald-400", label: "LIVE", pulse: false },
-  blocked: { color: "bg-red-500", label: "BLOCKED", pulse: false },
-  "no-channel": { color: "bg-zinc-500", label: "NO CHANNEL", pulse: false },
+  standby:     { color: "bg-amber-500/60",  label: "STANDBY",    pulse: false },
+  settling:    { color: "bg-amber-400",     label: "SETTLING",   pulse: true  },
+  live:        { color: "bg-emerald-400",   label: "LIVE",       pulse: false },
+  blocked:     { color: "bg-red-500",       label: "BLOCKED",    pulse: false },
+  "no-channel":{ color: "bg-zinc-500",      label: "NO CHANNEL", pulse: false },
 };
 
 export function StatusLed({ status }: { status: SensorStatus }) {

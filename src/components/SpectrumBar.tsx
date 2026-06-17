@@ -8,7 +8,25 @@ interface SpectrumBarProps {
 
 export function SpectrumBar({ data, width = 240, height = 32 }: SpectrumBarProps) {
   if (data.length === 0) {
-    return <div style={{ width, height }} className="opacity-20 bg-zinc-800 rounded" />;
+    return (
+      <svg width={width} height={height} role="img" aria-label="Audio spectrum — idle">
+        {[0.33, 0.66].map((f) => (
+          <line
+            key={f}
+            x1={0} y1={height * f}
+            x2={width} y2={height * f}
+            stroke="#3f3f46"
+            strokeWidth={0.5}
+            strokeDasharray="2,4"
+          />
+        ))}
+        <line
+          x1={0} y1={height - 3}
+          x2={width} y2={height - 3}
+          stroke="#34d399" strokeWidth={1} opacity={0.15}
+        />
+      </svg>
+    );
   }
 
   const barW = width / data.length;

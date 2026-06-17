@@ -14,8 +14,8 @@ export function DeviationMeter({ sigma, threshold, maxSigma = 8 }: DeviationMete
   return (
     <div className="w-full" role="meter" aria-valuenow={sigma} aria-valuemin={0} aria-valuemax={maxSigma} aria-label="Sigma deviation">
       <div className="flex justify-between text-[9px] font-mono text-zinc-500 mb-0.5">
-        <span>0\u03C3</span>
-        <span>{maxSigma}\u03C3</span>
+        <span>0σ</span>
+        <span>{maxSigma}σ</span>
       </div>
       <div className="relative h-2 bg-zinc-800 rounded-full overflow-hidden">
         {/* Threshold tick */}
@@ -33,7 +33,7 @@ export function DeviationMeter({ sigma, threshold, maxSigma = 8 }: DeviationMete
       </div>
       <div className="text-right text-[10px] font-mono mt-0.5">
         <span className={isTripped ? "text-red-400" : "text-zinc-400"}>
-          {sigma.toFixed(1)}\u03C3
+          {sigma.toFixed(1)}σ
         </span>
       </div>
     </div>

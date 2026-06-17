@@ -25,7 +25,7 @@ export function SensorPanel({
   const { status, value, secondaryValue, unit, secondaryUnit, sigma, mean, stddev, history, spectrum, threshold } = reading;
 
   return (
-    <div className="panel-card rounded-lg border border-zinc-700/50 bg-zinc-900/80 backdrop-blur p-4 flex flex-col gap-3">
+    <div className="panel-card rounded-lg border border-zinc-600/60 bg-zinc-800/60 backdrop-blur p-4 flex flex-col gap-3 h-full">
       {/* Header */}
       <div className="flex items-center justify-between">
         <h2 className="font-display text-sm font-semibold uppercase tracking-wider text-zinc-200">
@@ -36,7 +36,7 @@ export function SensorPanel({
 
       {/* No-channel fault card */}
       {status === "no-channel" && (
-        <div className="bg-zinc-800/60 border border-zinc-700/50 rounded p-3 text-xs text-zinc-400 leading-relaxed">
+        <div className="flex-1 bg-zinc-700/50 border border-zinc-600/40 rounded p-3 text-xs text-zinc-400 leading-relaxed">
           <p className="font-semibold text-amber-400 mb-1">Sensor not exposed</p>
           <p>{noChannelMessage || `The ${channelId} sensor is not available in this browser. Try Chrome on Android over HTTPS.`}</p>
         </div>
@@ -44,13 +44,13 @@ export function SensorPanel({
 
       {/* Blocked card */}
       {status === "blocked" && (
-        <div className="bg-zinc-800/60 border border-zinc-700/50 rounded p-3 text-xs text-zinc-400 leading-relaxed">
+        <div className="flex-1 bg-zinc-700/50 border border-zinc-600/40 rounded p-3 text-xs text-zinc-400 leading-relaxed">
           <p className="font-semibold text-red-400 mb-1">Permission denied</p>
           <p>Grant sensor access in your browser settings, then tap Enable.</p>
           {onEnable && (
             <button
               onClick={onEnable}
-              className="mt-2 px-3 py-1 text-[10px] font-mono uppercase bg-zinc-700 hover:bg-zinc-600 rounded transition-colors"
+              className="mt-2 px-3 py-1.5 text-[10px] font-mono uppercase font-semibold bg-emerald-700 hover:bg-emerald-600 text-white rounded transition-colors"
             >
               Enable
             </button>
@@ -59,11 +59,11 @@ export function SensorPanel({
       )}
 
       {/* Readings */}
-      {status !== "no-channel" && (
-        <>
+      {status !== "no-channel" && status !== "blocked" && (
+        <div className="flex-1 flex flex-col gap-3 min-h-0">
           {/* Primary value */}
           <div className="font-mono text-2xl tabular-nums text-zinc-100">
-            {value !== null ? value : "---"}
+            {value !== null ? value : "--.-"}
             <span className="text-sm text-zinc-500 ml-1">{unit}</span>
             {secondaryValue !== null && secondaryUnit && (
               <span className="text-sm text-zinc-500 ml-3">
@@ -74,8 +74,8 @@ export function SensorPanel({
 
           {/* Baseline readout */}
           <div className="text-[10px] font-mono text-zinc-500 flex gap-4">
-            <span>\u03BC={mean}</span>
-            <span>\u03C3={stddev}</span>
+            <span>µ={mean}</span>
+            <span>σ={stddev}</span>
           </div>
 
           {/* Sparkline */}
@@ -84,19 +84,19 @@ export function SensorPanel({
           {/* Spectrum (audio only) */}
           {spectrum && <SpectrumBar data={spectrum} />}
 
-          {/* Deviation meter */}
-          <DeviationMeter sigma={sigma} threshold={threshold} />
-
-          {/* Fallback enable button */}
-          {status === "standby" && onEnable && (
-            <button
-              onClick={onEnable}
-              className="self-start px-3 py-1.5 text-xs font-mono uppercase bg-zinc-700 hover:bg-zinc-600 rounded transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
-            >
-              Enable {channelId}
-            </button>
-          )}
-        </>
+          {/* Deviation meter + enable button pushed to bottom */}
+          <div className="mt-auto flex flex-col gap-2">
+            <DeviationMeter sigma={sigma} threshold={threshold} />
+            {status === "standby" && onEnable && (
+              <button
+                onClick={onEnable}
+                className="self-start px-4 py-2 text-xs font-mono uppercase font-semibold bg-emerald-700 hover:bg-emerald-600 text-white rounded transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+              >
+                Enable {title}
+              </button>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );
