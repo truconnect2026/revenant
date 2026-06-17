@@ -1,7 +1,8 @@
 "use client";
+import { memo } from "react";
 import { SensorReading } from "@/lib/types";
 import { StatusLed } from "./StatusLed";
-import { Sparkline } from "./Sparkline";
+import { CanvasSparkline } from "./CanvasSparkline";
 import { SpectrumBar } from "./SpectrumBar";
 import { DeviationMeter } from "./DeviationMeter";
 
@@ -15,7 +16,7 @@ interface SensorPanelProps {
   running?: boolean;
 }
 
-export function SensorPanel({
+export const SensorPanel = memo(function SensorPanel({
   title,
   channelId,
   reading,
@@ -70,7 +71,7 @@ export function SensorPanel({
           <div className="font-mono text-2xl tabular-nums text-zinc-100">
             {value !== null ? value : "--.-"}
             <span className="text-sm text-zinc-500 ml-1">{unit}</span>
-            {secondaryValue !== null && secondaryUnit && (
+            {secondaryValue != null && secondaryUnit && (
               <span className="text-sm text-zinc-500 ml-3">
                 {secondaryValue} <span className="text-xs">{secondaryUnit}</span>
               </span>
@@ -83,7 +84,7 @@ export function SensorPanel({
             <span>σ={stddev}</span>
           </div>
 
-          {/* Warmup progress bar — shown while baseline is settling */}
+          {/* Warmup progress bar */}
           {status === "settling" && warmupProgress < 1 && (
             <div className="flex flex-col gap-1">
               <div className="flex justify-between text-[10px] font-mono">
@@ -99,8 +100,8 @@ export function SensorPanel({
             </div>
           )}
 
-          {/* Sparkline */}
-          <Sparkline data={history} color={color} />
+          {/* Canvas sparkline trace */}
+          <CanvasSparkline data={history} color={color} />
 
           {/* Spectrum (audio only) */}
           {spectrum && <SpectrumBar data={spectrum} />}
@@ -121,4 +122,4 @@ export function SensorPanel({
       )}
     </div>
   );
-}
+});

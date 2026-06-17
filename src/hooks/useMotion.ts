@@ -10,10 +10,11 @@ const THRESHOLD = 4.5;
 const COOLDOWN_MS = 1500;
 const HISTORY_LEN = 80;
 const POST_TRIP_SKIP = 5;
+const VISUAL_EVERY = 4; // throttle visual setState to ~5Hz
 
 export function useMotion(
   active: boolean,
-  onEvent: (e: AnomalyEvent) => void
+  onEvent: (e: AnomalyEvent, blob?: Blob) => void
 ): SensorReading & { enable: () => Promise<void>; recalibrate: () => void } {
   const [status, setStatus] = useState<SensorStatus>("standby");
   const [value, setValue] = useState<number | null>(null);
@@ -28,6 +29,7 @@ export function useMotion(
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastTripRef = useRef(0);
   const skipCountRef = useRef(0);
+  const visualTickRef = useRef(0);
   const historyRef = useRef<number[]>([]);
   const onEventRef = useRef(onEvent);
   onEventRef.current = onEvent;
@@ -68,6 +70,7 @@ export function useMotion(
   const recalibrate = useCallback(() => {
     historyRef.current = [];
     skipCountRef.current = 0;
+    visualTickRef.current = 0;
     baselineRef.current.reset();
     setHistory([]);
     setSigma(0);
@@ -77,7 +80,6 @@ export function useMotion(
     setStatus("settling");
   }, []);
 
-  // Sampling interval
   useEffect(() => {
     if (!active || status === "standby" || status === "no-channel" || status === "blocked") {
       return;
@@ -96,8 +98,11 @@ export function useMotion(
       const rot = latestRotation.current;
       const rotMag = rot ? Math.hypot(rot.alpha, rot.beta, rot.gamma) : 0;
 
-      if (baseline.isWarmedUp) {
+      if (baseline.isWarmedUp && status !== "live") {
         setStatus("live");
+      }
+
+      if (baseline.isWarmedUp) {
         const now = Date.now();
         if (s >= THRESHOLD && now - lastTripRef.current > COOLDOWN_MS) {
           lastTripRef.current = now;
@@ -121,15 +126,19 @@ export function useMotion(
         baseline.push(accelMag);
       }
 
-      setValue(Math.round(accelMag * 100) / 100);
-      setSecondaryValue(Math.round(rotMag * 10) / 10);
-      setSigma(Math.round(s * 100) / 100);
-      setMean(Math.round(baseline.mean * 100) / 100);
-      setStddev(Math.round(baseline.stddev * 100) / 100);
-      setWarmupProgress(baseline.isWarmedUp ? 1 : Math.min(baseline.sampleCount / WARMUP, 1));
-
       historyRef.current = [...historyRef.current.slice(-(HISTORY_LEN - 1)), accelMag];
-      setHistory(historyRef.current);
+
+      visualTickRef.current++;
+      if (visualTickRef.current >= VISUAL_EVERY) {
+        visualTickRef.current = 0;
+        setValue(Math.round(accelMag * 100) / 100);
+        setSecondaryValue(Math.round(rotMag * 10) / 10);
+        setSigma(Math.round(s * 100) / 100);
+        setMean(Math.round(baseline.mean * 100) / 100);
+        setStddev(Math.round(baseline.stddev * 100) / 100);
+        setWarmupProgress(baseline.isWarmedUp ? 1 : Math.min(baseline.sampleCount / WARMUP, 1));
+        setHistory(historyRef.current.slice());
+      }
     }, 1000 / SAMPLE_HZ);
 
     return () => {
@@ -137,7 +146,6 @@ export function useMotion(
     };
   }, [active, status]);
 
-  // Stop + reset all state on session end
   useEffect(() => {
     if (!active) {
       if (intervalRef.current) clearInterval(intervalRef.current);
@@ -149,6 +157,7 @@ export function useMotion(
       latestRotation.current = null;
       historyRef.current = [];
       skipCountRef.current = 0;
+      visualTickRef.current = 0;
       baselineRef.current.reset();
       setValue(null);
       setSecondaryValue(null);

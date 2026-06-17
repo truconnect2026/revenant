@@ -14,7 +14,8 @@ export interface AnomalyEvent {
   mean: number;
   stddev: number;
   timestamp: number;
-  clipUrl?: string; // object URL for recorded audio clip
+  clipUrl?: string;          // object URL, valid for current page session only
+  spectrogram?: number[][];  // FFT frames: rows=time (oldest first), cols=freq bins 0-1
 }
 
 export interface SessionData {

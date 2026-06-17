@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnomalyEvent, SessionData } from "@/lib/types";
-import { loadSessions, saveSession } from "@/lib/storage";
+import { idbSaveSession, idbLoadSessions } from "@/lib/idb";
 import { useMagnetometer } from "@/hooks/useMagnetometer";
 import { useMicrophone } from "@/hooks/useMicrophone";
 import { useMotion } from "@/hooks/useMotion";
@@ -17,38 +17,115 @@ export function Dashboard() {
   const [events, setEvents] = useState<AnomalyEvent[]>([]);
   const [sessionLabel, setSessionLabel] = useState("");
   const [pastSessions, setPastSessions] = useState<SessionData[]>([]);
+  const [transcribeEnabled, setTranscribeEnabled] = useState(false);
+
   const sessionIdRef = useRef<string>("");
   const startedAtRef = useRef<number>(0);
+  const eventsRef = useRef<AnomalyEvent[]>([]);
+  const sessionLabelRef = useRef<string>("");
+  sessionLabelRef.current = sessionLabel;
+  const clipBlobsRef = useRef<Map<string, Blob>>(new Map());
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null);
 
-  // Load past sessions from localStorage on first render
+  // Load past sessions from IndexedDB on first render
   useEffect(() => {
-    setPastSessions(loadSessions());
+    idbLoadSessions().then(setPastSessions).catch(() => {});
   }, []);
 
-  const addEvent = useCallback((ev: AnomalyEvent) => {
+  // Check if transcription is configured
+  useEffect(() => {
+    fetch("/api/transcribe")
+      .then((r) => r.json())
+      .then((d: { available?: boolean }) => setTranscribeEnabled(d.available === true))
+      .catch(() => {});
+  }, []);
+
+  const acquireWakeLock = useCallback(async () => {
+    if (!("wakeLock" in navigator)) return;
+    try {
+      wakeLockRef.current = await (navigator as unknown as { wakeLock: { request: (type: string) => Promise<WakeLockSentinel> } }).wakeLock.request("screen");
+    } catch {
+      // Screen wake lock not available — silently skip
+    }
+  }, []);
+
+  const releaseWakeLock = useCallback(() => {
+    wakeLockRef.current?.release().catch(() => {});
+    wakeLockRef.current = null;
+  }, []);
+
+  // Re-acquire wake lock when page becomes visible again
+  useEffect(() => {
+    if (!running) return;
+    const handler = () => {
+      if (document.visibilityState === "visible" && !wakeLockRef.current) {
+        acquireWakeLock();
+      }
+    };
+    document.addEventListener("visibilitychange", handler);
+    return () => document.removeEventListener("visibilitychange", handler);
+  }, [running, acquireWakeLock]);
+
+  const coords = useGeolocation(running);
+  const coordsRef = useRef(coords);
+  coordsRef.current = coords;
+
+  const addEvent = useCallback((ev: AnomalyEvent, blob?: Blob) => {
+    const newClips = new Map<string, Blob>();
+    if (blob) {
+      newClips.set(ev.id, blob);
+      clipBlobsRef.current.set(ev.id, blob);
+    }
+
+    eventsRef.current = [...eventsRef.current, ev];
+
     setEvents((prev) => {
-      const next = [...prev, ev];
-      // Cap to prevent unbounded memory growth on long sessions
-      return next.length > MAX_EVENTS ? next.slice(-MAX_EVENTS) : next;
+      let next = [...prev, ev];
+      if (next.length > MAX_EVENTS) {
+        // Revoke URLs of evicted events to free memory
+        const evicted = next.slice(0, next.length - MAX_EVENTS);
+        evicted.forEach((e) => { if (e.clipUrl) URL.revokeObjectURL(e.clipUrl); });
+        next = next.slice(-MAX_EVENTS);
+        eventsRef.current = next;
+      }
+      return next;
     });
+
+    // Incremental IDB write — crash doesn't lose the night's data
+    idbSaveSession(
+      {
+        id: sessionIdRef.current,
+        started_at: startedAtRef.current,
+        ended_at: null,
+        label: sessionLabelRef.current || null,
+        location: coordsRef.current,
+        events: eventsRef.current,
+      },
+      newClips
+    ).catch(() => {});
   }, []);
 
   const emf = useMagnetometer(running, addEvent);
   const sound = useMicrophone(running, addEvent);
   const motion = useMotion(running, addEvent);
-  const coords = useGeolocation(running);
 
   const startSession = async () => {
+    // Revoke any leftover URLs from the previous session
+    eventsRef.current.forEach((e) => { if (e.clipUrl) URL.revokeObjectURL(e.clipUrl); });
+    eventsRef.current = [];
+    clipBlobsRef.current = new Map();
+
     sessionIdRef.current = crypto.randomUUID();
     startedAtRef.current = Date.now();
     setEvents([]);
 
-    // Call all enable()s synchronously before any await so the user-gesture
-    // context covers DeviceMotionEvent.requestPermission() on iOS.
+    await acquireWakeLock();
+
+    // Call all enable()s synchronously before any await so iOS gesture covers
+    // DeviceMotionEvent.requestPermission()
     emf.enable();
     const soundP = sound.enable();
     const motionP = motion.enable();
-    // Ignore individual sensor failures — a blocked channel shows its own card
     await Promise.all([soundP, motionP]).catch(() => {});
 
     setRunning(true);
@@ -56,19 +133,21 @@ export function Dashboard() {
 
   const stopSession = async () => {
     setRunning(false);
+    releaseWakeLock();
 
     const session: SessionData = {
       id: sessionIdRef.current,
       started_at: startedAtRef.current,
       ended_at: Date.now(),
-      label: sessionLabel || null,
-      location: coords,
-      events,
+      label: sessionLabelRef.current || null,
+      location: coordsRef.current,
+      events: eventsRef.current,
     };
 
-    // Persist locally
-    saveSession(session);
-    setPastSessions(loadSessions());
+    // Final IDB save with ended_at timestamp
+    await idbSaveSession(session, new Map()).catch(() => {});
+    const loaded = await idbLoadSessions().catch(() => pastSessions);
+    setPastSessions(loaded);
 
     // Optional server sync when Postgres is configured
     try {
@@ -78,12 +157,13 @@ export function Dashboard() {
         body: JSON.stringify(session),
       });
     } catch {
-      // Offline or no Postgres — already saved to localStorage
+      // Offline or no Postgres — already in IndexedDB
     }
   };
 
   const handleRecalibrate = () => {
     setEvents([]);
+    eventsRef.current = [];
     emf.recalibrate();
     sound.recalibrate();
     motion.recalibrate();
@@ -91,7 +171,6 @@ export function Dashboard() {
 
   return (
     <div className="min-h-screen bg-scope text-zinc-100 flex flex-col">
-      {/* Graticule overlay */}
       <div className="graticule fixed inset-0 pointer-events-none z-0" />
 
       <div className="relative z-10 max-w-7xl w-full mx-auto px-4 py-6 flex flex-col flex-1">
@@ -173,16 +252,20 @@ export function Dashboard() {
           />
         </div>
 
-        {/* Event Log — fills remaining viewport height */}
+        {/* Event Log */}
         <section className="flex flex-col flex-1 min-h-0 mb-0">
           <h2 className="font-display text-sm font-semibold uppercase tracking-wider text-zinc-400 mb-2">
             Event Log
           </h2>
-          <EventLog events={events} className="flex-1 min-h-[5rem]" />
+          <EventLog
+            events={events}
+            className="flex-1 min-h-[5rem]"
+            transcribeEnabled={transcribeEnabled}
+          />
         </section>
 
-        {/* Past sessions — only visible when not running */}
-        {!running && <SessionHistory sessions={pastSessions} />}
+        {/* Past sessions */}
+        {!running && <SessionHistory sessions={pastSessions} onSessionsChange={setPastSessions} />}
 
         {/* Footer */}
         <footer className="mt-6 text-center text-[10px] font-mono text-zinc-600">
