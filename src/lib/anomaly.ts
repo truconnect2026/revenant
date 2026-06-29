@@ -15,8 +15,9 @@ export interface BaselineOptions {
   robust?: boolean;
   /**
    * Lower clamp on stddev, in the sample's own units. Prevents hypersensitivity
-   * (and a flood of false trips) when the environment is dead-quiet and the
-   * measured spread collapses toward zero. Only applied in robust mode.
+   * (and a flood of false trips) when the signal is near-constant — e.g. a still
+   * phone whose accel variance collapses toward zero, making any micro-vibration
+   * divide by ~0 and explode into thousands of sigma. Applied in both modes.
    */
   minSigma?: number;
 }
@@ -96,11 +97,14 @@ export class RollingBaseline {
       return Math.max(this.robustSd, this.minSigma);
     }
     const n = this.filledLength;
-    if (n < 2) return 0;
+    if (n < 2) return this.minSigma;
     const mean = this.sum / n;
-    const variance = this.sumSq / n - mean * mean;
-    // sample stddev (n-1)
-    return Math.sqrt((variance * n) / (n - 1));
+    // Clamp to >= 0: catastrophic cancellation can make this slightly negative
+    // when the signal is near-constant, which would make sqrt() return NaN.
+    const variance = Math.max(0, this.sumSq / n - mean * mean);
+    // sample stddev (n-1), floored so a collapsed variance can't make score()
+    // divide by ~0 and explode.
+    return Math.max(Math.sqrt((variance * n) / (n - 1)), this.minSigma);
   }
 
   /** Score a value against current baseline WITHOUT inserting it */

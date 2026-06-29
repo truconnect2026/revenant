@@ -11,6 +11,12 @@ const COOLDOWN_MS = 1500;
 const HISTORY_LEN = 80;
 const POST_TRIP_SKIP = 5;
 const VISUAL_EVERY = 4; // throttle visual setState to ~5Hz
+// Accel-magnitude σ floor in m/s². A resting phone has near-zero variance, so
+// without this any micro-vibration divides by ~0 and explodes into thousands of
+// sigma. 0.5 ignores normal handheld jitter / sensor noise (~0.1–0.3 m/s²); with
+// THRESHOLD=4.5 the effective trip point is ~2.25 m/s² of deviation — clear of
+// resting noise but reached by a deliberate tap/bump.
+const MIN_SIGMA = 0.5;
 
 export function useMotion(
   active: boolean,
@@ -25,7 +31,7 @@ export function useMotion(
   const [history, setHistory] = useState<number[]>([]);
   const [warmupProgress, setWarmupProgress] = useState(0);
 
-  const baselineRef = useRef(new RollingBaseline(WINDOW_SIZE, WARMUP));
+  const baselineRef = useRef(new RollingBaseline(WINDOW_SIZE, WARMUP, { minSigma: MIN_SIGMA }));
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastTripRef = useRef(0);
   const skipCountRef = useRef(0);

@@ -33,9 +33,16 @@ const POST_ROLL_CHUNKS = 20;
 const SPEC_BINS = 32;
 const SPEC_HISTORY = 20;
 
+// Hard floor for dBFS. Full-scale is 0; true silence diverges toward -inf, so a
+// near-zero instantaneous RMS would otherwise yield values like -537 dBFS that
+// poison the detection score, the baseline, the readout, and the event value.
+const DBFS_FLOOR = -100;
+
 function rmsToDbfs(rms: number): number {
-  if (rms <= 0) return -100;
-  return 20 * Math.log10(rms);
+  if (rms <= 0) return DBFS_FLOOR;
+  // Clamp to the valid range [DBFS_FLOOR, 0] at the moment of computation, before
+  // the value is used anywhere downstream.
+  return Math.max(DBFS_FLOOR, Math.min(0, 20 * Math.log10(rms)));
 }
 
 interface CaptureState {
