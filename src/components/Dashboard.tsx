@@ -119,13 +119,18 @@ export function Dashboard() {
     startedAtRef.current = Date.now();
     setEvents([]);
 
-    await acquireWakeLock();
-
-    // Call all enable()s synchronously before any await so iOS gesture covers
-    // DeviceMotionEvent.requestPermission()
+    // Fire ALL sensor enable()s synchronously inside the tap, BEFORE any await.
+    // On iOS, DeviceMotionEvent.requestPermission() (called inside motion.enable)
+    // only succeeds while the user-gesture chain is intact — any preceding await
+    // breaks that chain and the prompt auto-denies. So no await may run first.
     emf.enable();
     const soundP = sound.enable();
     const motionP = motion.enable();
+
+    // Wake lock is best-effort; fire-and-forget AFTER the enables so its await
+    // never severs the gesture chain the motion permission prompt depends on.
+    acquireWakeLock();
+
     await Promise.all([soundP, motionP]).catch(() => {});
 
     setRunning(true);

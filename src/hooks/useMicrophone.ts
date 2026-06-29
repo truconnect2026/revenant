@@ -8,10 +8,17 @@ const WINDOW_SIZE = 200;
 const WARMUP = 60;
 const THRESHOLD = 3;
 const EMA_ALPHA = 0.3;
-const POST_TRIP_SKIP = 5;
+// Skip 15 samples (~750ms) after a trip so the clap's body and reverb tail
+// never get learned into the baseline. Half the cooldown, so the floor still
+// adapts to genuine ambient drift between events.
+const POST_TRIP_SKIP = 15;
 const COOLDOWN_MS = 1500;
 const HISTORY_LEN = 80;
 const FFT_SIZE = 256;
+// Robust-baseline σ floor, in dBFS. Stops the quiet floor from collapsing to a
+// hair-trigger in a dead-silent room; with THRESHOLD=3 the effective trip point
+// sits ~6 dB above the median floor when the room is silent.
+const MIN_SIGMA_DB = 2;
 
 // Visual state updates throttled to ~5Hz (every 4th detection tick)
 const VISUAL_EVERY = 4;
@@ -51,7 +58,9 @@ export function useMicrophone(
   const [spectrum, setSpectrum] = useState<number[]>([]);
   const [warmupProgress, setWarmupProgress] = useState(0);
 
-  const baselineRef = useRef(new RollingBaseline(WINDOW_SIZE, WARMUP));
+  const baselineRef = useRef(
+    new RollingBaseline(WINDOW_SIZE, WARMUP, { robust: true, minSigma: MIN_SIGMA_DB })
+  );
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastTripRef = useRef(0);
   const skipCountRef = useRef(0);
@@ -194,12 +203,14 @@ export function useMicrophone(
       analyser.getFloatTimeDomainData(timeDomain);
       analyser.getByteFrequencyData(freqData);
 
-      // RMS → dBFS
+      // RMS → dBFS (instantaneous — this is what detection scores against, so a
+      // sharp clap keeps its full amplitude instead of being averaged away).
       let sumSq = 0;
       for (let i = 0; i < timeDomain.length; i++) sumSq += timeDomain[i] * timeDomain[i];
       const rawDbfs = rmsToDbfs(Math.sqrt(sumSq / timeDomain.length));
 
-      // EMA smoothing (~150ms time constant)
+      // EMA smoothing (~150ms time constant). The smoothed value feeds the
+      // baseline only — it tracks the slow ambient floor without chasing spikes.
       if (emaRef.current === null) emaRef.current = rawDbfs;
       emaRef.current = EMA_ALPHA * rawDbfs + (1 - EMA_ALPHA) * emaRef.current;
       const dbfs = emaRef.current;
@@ -214,7 +225,9 @@ export function useMicrophone(
       if (fftHistoryRef.current.length > SPEC_HISTORY) fftHistoryRef.current.shift();
 
       const baseline = baselineRef.current;
-      const s = baseline.score(dbfs);
+      // Detect on the instantaneous dBFS; the robust median/MAD baseline keeps σ
+      // tied to the quiet floor so a clap reads as the many-σ event it is.
+      const s = baseline.score(rawDbfs);
 
       // Status transition (immediate — not throttled)
       if (baseline.isWarmedUp && status !== "live") {
@@ -230,7 +243,7 @@ export function useMicrophone(
           const eventBase: AnomalyEvent = {
             id: crypto.randomUUID(),
             channel: "sound",
-            value: Math.round(dbfs * 10) / 10,
+            value: Math.round(rawDbfs * 10) / 10,
             unit: "dBFS",
             sigma: Math.round(s * 100) / 100,
             mean: Math.round(baseline.mean * 10) / 10,
@@ -247,19 +260,21 @@ export function useMicrophone(
         }
       }
 
+      // Baseline learns the SMOOTHED floor, and only while not in a post-trip
+      // skip window — so the transients we just tripped on can't inflate σ.
       if (skipCountRef.current > 0) {
         skipCountRef.current--;
       } else {
         baseline.push(dbfs);
       }
 
-      historyRef.current = [...historyRef.current.slice(-(HISTORY_LEN - 1)), dbfs];
+      historyRef.current = [...historyRef.current.slice(-(HISTORY_LEN - 1)), rawDbfs];
 
       // Throttle visual React state to ~5Hz
       visualTickRef.current++;
       if (visualTickRef.current >= VISUAL_EVERY) {
         visualTickRef.current = 0;
-        setValue(Math.round(dbfs * 10) / 10);
+        setValue(Math.round(rawDbfs * 10) / 10);
         setSigma(Math.round(s * 100) / 100);
         setMean(Math.round(baseline.mean * 10) / 10);
         setStddev(Math.round(baseline.stddev * 10) / 10);
