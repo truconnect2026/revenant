@@ -15,10 +15,12 @@ const POST_TRIP_SKIP = 15;
 const COOLDOWN_MS = 1500;
 const HISTORY_LEN = 80;
 const FFT_SIZE = 256;
-// Robust-baseline σ floor, in dBFS. Stops the quiet floor from collapsing to a
-// hair-trigger in a dead-silent room; with THRESHOLD=3 the effective trip point
-// sits ~6 dB above the median floor when the room is silent.
-const MIN_SIGMA_DB = 2;
+// Robust-baseline σ floor, in dBFS. 2 dB was far too tight for audio: a quiet
+// room's measured spread collapses below it, so every ordinary sound read as
+// ~20σ above the floor and flooded the log. 7 dB means a trip needs a genuinely
+// loud transient — with THRESHOLD=3 the effective trip point sits ~21 dB above
+// the baseline room tone.
+const MIN_SIGMA_DB = 7;
 
 // Visual state updates throttled to ~5Hz (every 4th detection tick)
 const VISUAL_EVERY = 4;
@@ -94,7 +96,19 @@ export function useMicrophone(
 
   const enable = useCallback(async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Capture RAW room tone. The default speech DSP (noise suppression / AGC /
+      // echo cancellation) gates a quiet room down to digital silence, so the
+      // baseline collapses onto the dBFS clamp floor (-100) and every ordinary
+      // sound reads as a huge deviation. Disabling it lets the baseline learn the
+      // true, continuous ambient level so σ is meaningful. Browsers that ignore
+      // these hints simply fall back to processed audio.
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        },
+      });
       streamRef.current = stream;
 
       const ctx = new AudioContext();
