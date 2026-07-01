@@ -1,10 +1,35 @@
 "use client";
-import { memo } from "react";
+import { memo, type CSSProperties } from "react";
 import { SensorReading } from "@/lib/types";
 import { StatusLed } from "./StatusLed";
 import { CanvasSparkline } from "./CanvasSparkline";
 import { SpectrumBar } from "./SpectrumBar";
-import { DeviationMeter } from "./DeviationMeter";
+import { SigmaArc } from "./SigmaArc";
+
+// #rrggbb → rgba() with the given alpha, for the sigma-reactive card glow.
+function hexToRgba(hex: string, alpha: number): string {
+  const h = hex.replace("#", "");
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+// Map current |sigma| (relative to threshold) to a subtle outer-glow color+blur.
+// Near baseline → nothing; approaching threshold → faint amber; at/over → a
+// capped glow in the channel color. Intensity is clamped so it never looks gaudy.
+function sigmaGlow(sigma: number, threshold: number, color: string): { color: string; blur: string } {
+  if (!(threshold > 0)) return { color: "transparent", blur: "0px" };
+  const ratio = Math.min(Math.abs(sigma) / threshold, 1.5);
+  if (ratio < 0.2) return { color: "transparent", blur: "0px" };
+  if (ratio < 1) {
+    const a = ((ratio - 0.2) / 0.8) * 0.16; // 0 → 0.16 amber
+    return { color: `rgba(245, 158, 11, ${a.toFixed(3)})`, blur: `${(8 + ratio * 8).toFixed(1)}px` };
+  }
+  const over = Math.min(ratio - 1, 0.5) / 0.5; // 0 → 1 across threshold..1.5×
+  const a = 0.2 + over * 0.16; // 0.20 → 0.36, capped
+  return { color: hexToRgba(color, a), blur: `${(18 + over * 8).toFixed(1)}px` };
+}
 
 interface SensorPanelProps {
   title: string;
@@ -30,8 +55,13 @@ export const SensorPanel = memo(function SensorPanel({
     sigma, mean, stddev, history, spectrum, threshold, warmupProgress,
   } = reading;
 
+  const glow = sigmaGlow(sigma, threshold, color);
+
   return (
-    <div className="panel-card rounded-lg border border-zinc-600/60 bg-zinc-800/60 backdrop-blur p-4 flex flex-col gap-3 h-full">
+    <div
+      className="panel-card rounded-lg border border-zinc-600/60 bg-zinc-800/60 backdrop-blur p-4 flex flex-col gap-3 h-full"
+      style={{ "--glow-color": glow.color, "--glow-blur": glow.blur } as CSSProperties}
+    >
       {/* Header */}
       <div className="flex items-center justify-between">
         <h2 className="font-display text-sm font-semibold uppercase tracking-wider text-zinc-200">
@@ -67,13 +97,19 @@ export const SensorPanel = memo(function SensorPanel({
       {/* Readings */}
       {status !== "no-channel" && status !== "blocked" && (
         <div className="flex-1 flex flex-col gap-3 min-h-0">
-          {/* Primary value */}
-          <div className="font-mono text-2xl tabular-nums text-zinc-100">
-            {value !== null ? value : "--.-"}
-            <span className="text-sm text-zinc-500 ml-1">{unit}</span>
+          {/* Primary value — large instrument readout */}
+          <div className="flex items-baseline gap-x-2 gap-y-1 flex-wrap">
+            <span
+              className={`font-mono text-4xl font-semibold tracking-tight tabular-nums leading-none ${
+                value !== null ? "text-zinc-50" : "text-zinc-600"
+              }`}
+            >
+              {value !== null ? value : "--.-"}
+            </span>
+            <span className="text-xs text-zinc-500">{unit}</span>
             {secondaryValue != null && secondaryUnit && (
-              <span className="text-sm text-zinc-500 ml-3">
-                {secondaryValue} <span className="text-xs">{secondaryUnit}</span>
+              <span className="text-xs text-zinc-500 tabular-nums ml-1">
+                {secondaryValue} <span className="text-[10px]">{secondaryUnit}</span>
               </span>
             )}
           </div>
@@ -106,9 +142,9 @@ export const SensorPanel = memo(function SensorPanel({
           {/* Spectrum (audio only) */}
           {spectrum && <SpectrumBar data={spectrum} />}
 
-          {/* Deviation meter + enable button pushed to bottom */}
+          {/* Sigma-vs-threshold arc gauge + enable button pushed to bottom */}
           <div className="mt-auto flex flex-col gap-2">
-            <DeviationMeter sigma={sigma} threshold={threshold} />
+            <SigmaArc sigma={sigma} threshold={threshold} color={color} />
             {status === "standby" && !running && onEnable && (
               <button
                 onClick={onEnable}

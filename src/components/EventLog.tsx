@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import { AnomalyEvent } from "@/lib/types";
 import { SpectrogramCanvas } from "./SpectrogramCanvas";
 
@@ -13,6 +13,13 @@ const CHANNEL_COLORS: Record<string, string> = {
   emf: "text-cyan-400",
   sound: "text-emerald-400",
   motion: "text-amber-400",
+};
+
+// Entry-flash tint per channel (matches the CHANNEL_COLORS hues at low alpha).
+const CHANNEL_FLASH: Record<string, string> = {
+  emf: "rgba(34, 211, 238, 0.26)",
+  sound: "rgba(52, 211, 153, 0.26)",
+  motion: "rgba(251, 191, 36, 0.26)",
 };
 
 function formatTime(ts: number): string {
@@ -63,7 +70,8 @@ export function EventLog({ events, className = "", transcribeEnabled = false }: 
       {[...events].reverse().map((ev) => (
         <div
           key={ev.id}
-          className="flex flex-col px-3 py-1.5 bg-zinc-800/50 rounded border border-zinc-700/30 gap-1"
+          className="event-row event-flash flex flex-col px-3 py-1.5 rounded border border-zinc-700/30 gap-1"
+          style={{ "--flash-color": CHANNEL_FLASH[ev.channel] ?? "rgba(161, 161, 170, 0.24)" } as CSSProperties}
         >
           {/* Main event row */}
           <div className="flex items-center gap-3 text-xs font-mono">

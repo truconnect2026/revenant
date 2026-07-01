@@ -22,12 +22,57 @@
   background-size: 40px 40px;
 }
 
-/* Panel glass effect */
+/* Panel glass effect.
+   The last shadow layer is a sigma-reactive outer glow driven by CSS vars set
+   per-card in SensorPanel; it stays transparent at baseline so the card looks
+   unchanged until a channel approaches its threshold. */
 .panel-card {
   box-shadow:
     0 0 0 1px rgba(255, 255, 255, 0.07),
     inset 0 1px 0 rgba(255, 255, 255, 0.06),
-    0 4px 20px rgba(0, 0, 0, 0.5);
+    0 4px 20px rgba(0, 0, 0, 0.5),
+    0 0 var(--glow-blur, 0px) 0 var(--glow-color, transparent);
+  transition: box-shadow 220ms ease-out;
+}
+
+/* Item 1 — breathing pulse for LIVE / SETTLING status dots. Slow, calm, and
+   GPU-friendly (opacity + transform only). Static dots never get this class. */
+@keyframes led-breathe {
+  0%, 100% { opacity: 0.55; transform: scale(0.85); }
+  50%      { opacity: 1;    transform: scale(1.12); }
+}
+.led-breathe {
+  animation: led-breathe 2.4s ease-in-out infinite;
+  will-change: opacity, transform;
+}
+
+/* Item 3 — barely-perceptible drift of the graticule so the backdrop feels like
+   a live instrument screen. Transform-only (compositor, no repaint). The layer
+   is oversized (inset below) and travels exactly one 40px grid cell, so the loop
+   is seamless and never exposes an edge. */
+@keyframes graticule-drift {
+  0%   { transform: translate3d(0, 0, 0); }
+  100% { transform: translate3d(40px, 40px, 0); }
+}
+.graticule-anim {
+  inset: -48px;
+  animation: graticule-drift 34s linear infinite;
+  will-change: transform;
+}
+
+/* Item 5 — one-shot entry flash for a new Event Log row. The animation fires
+   once when the row's DOM node first mounts (existing keyed rows don't re-run
+   it), fading a channel-tinted highlight back to the row's resting color. */
+.event-row {
+  background-color: rgba(39, 39, 42, 0.5); /* = bg-zinc-800/50 resting state */
+}
+@keyframes event-flash {
+  0%   { background-color: var(--flash-color); }
+  55%  { background-color: var(--flash-color); }
+  100% { background-color: rgba(39, 39, 42, 0.5); }
+}
+.event-flash {
+  animation: event-flash 0.85s ease-out 1;
 }
 
 /* Scrollbar */

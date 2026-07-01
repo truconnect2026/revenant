@@ -176,7 +176,7 @@ export function Dashboard() {
 
   return (
     <div className="min-h-screen bg-scope text-zinc-100 flex flex-col">
-      <div className="graticule fixed inset-0 pointer-events-none z-0" />
+      <div className="graticule graticule-anim fixed inset-0 pointer-events-none z-0" />
 
       <div className="relative z-10 max-w-7xl w-full mx-auto px-4 py-6 flex flex-col flex-1">
         {/* Header */}
