@@ -5,6 +5,11 @@ import { StatusLed } from "./StatusLed";
 import { CanvasSparkline } from "./CanvasSparkline";
 import { DeviationBar } from "./DeviationBar";
 
+function hexToRgba(hex: string, alpha: number): string {
+  const h = hex.replace("#", "");
+  return `rgba(${parseInt(h.slice(0, 2), 16)}, ${parseInt(h.slice(2, 4), 16)}, ${parseInt(h.slice(4, 6), 16)}, ${alpha})`;
+}
+
 interface SensorPanelProps {
   title: string;
   channelId: string;
@@ -44,7 +49,7 @@ export const SensorPanel = memo(function SensorPanel({
 
   if (fault) {
     return (
-      <div className="panel-card rounded-lg p-3 flex flex-col gap-1.5">
+      <div className="panel-card rounded-lg p-3 flex flex-col gap-2">
         {header}
         <p className="text-[10px] font-mono text-zinc-500 leading-snug">
           {status === "no-channel"
@@ -68,7 +73,14 @@ export const SensorPanel = memo(function SensorPanel({
       {/* Row 1 — identity (left) + hero readout (right) */}
       <div className="flex items-start justify-between gap-3">
         {header}
-        <div className="flex items-baseline gap-1 leading-none shrink-0">
+        <div className="relative isolate flex items-baseline gap-1 leading-none shrink-0">
+          {status === "live" && (
+            <span
+              aria-hidden
+              className="absolute -z-10 -inset-x-3 -inset-y-2 rounded-full blur-md"
+              style={{ background: `radial-gradient(60% 100% at 70% 50%, ${hexToRgba(color, 0.2)}, transparent)` }}
+            />
+          )}
           <span
             className={`font-mono text-[26px] font-semibold tabular-nums tracking-tight ${
               value !== null ? "text-zinc-50" : "text-zinc-600"
@@ -88,8 +100,10 @@ export const SensorPanel = memo(function SensorPanel({
         </div>
       )}
 
-      {/* Row 2 — oscilloscope trace */}
-      <CanvasSparkline data={history} color={color} height={30} />
+      {/* Row 2 — oscilloscope trace in a recessed readout well */}
+      <div className="readout-well p-2">
+        <CanvasSparkline data={history} color={color} height={30} />
+      </div>
 
       {/* Row 3 — compact deviation meter */}
       <DeviationBar sigma={sigma} threshold={threshold} color={color} />
