@@ -36,7 +36,7 @@ export function EventLog({ events, className = "", transcribeEnabled = false }: 
     try {
       const blob = await fetch(ev.clipUrl).then((r) => r.blob());
       const fd = new FormData();
-      fd.append("audio", blob, "clip.webm");
+      fd.append("audio", blob, "clip.wav");
       const resp = await fetch("/api/transcribe", { method: "POST", body: fd });
       const data = await resp.json() as { text?: string; error?: string };
       setTranscriptions((prev) => ({

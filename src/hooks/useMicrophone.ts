@@ -25,11 +25,14 @@ const MIN_SIGMA_DB = 7;
 // Visual state updates throttled to ~5Hz (every 4th detection tick)
 const VISUAL_EVERY = 4;
 
-// Pre-roll: 30 chunks × 100ms = 3s before the anomaly
-// Post-roll: 20 chunks × 100ms = 2s after the anomaly
-const CHUNK_MS = 100;
-const PRE_ROLL_CHUNKS = 30;
-const POST_ROLL_CHUNKS = 20;
+// Clip capture: keep ~3s of raw PCM before the event, plus ~2s after. We hold
+// raw samples (not encoded chunks) so each clip is written as a self-contained
+// WAV with its own header — MediaRecorder's WebM/Opus init header only lives in
+// the FIRST chunk of the recording, so a clip assembled from later ring-buffer
+// chunks is headerless and undecodable.
+const PRE_ROLL_SEC = 3;
+const POST_ROLL_SEC = 2;
+const PCM_BLOCK = 4096; // ScriptProcessor buffer size (~85ms at 48kHz)
 
 // Spectrogram: keep rolling window of 20 downsampled FFT frames
 const SPEC_BINS = 32;
@@ -47,10 +50,49 @@ function rmsToDbfs(rms: number): number {
   return Math.max(DBFS_FLOOR, Math.min(0, 20 * Math.log10(rms)));
 }
 
-interface CaptureState {
-  pre: Blob[];
-  post: Blob[];
-  remaining: number;
+// Encode mono Float32 PCM blocks into a standalone 16-bit WAV. A WAV carries its
+// full header + true duration, so the resulting file is decodable everywhere and
+// its player renders correctly (no NaN/0 duration).
+function encodeWav(chunks: Float32Array[], sampleRate: number): Blob {
+  let length = 0;
+  for (const c of chunks) length += c.length;
+
+  const buffer = new ArrayBuffer(44 + length * 2);
+  const view = new DataView(buffer);
+  const writeStr = (offset: number, s: string) => {
+    for (let i = 0; i < s.length; i++) view.setUint8(offset + i, s.charCodeAt(i));
+  };
+
+  writeStr(0, "RIFF");
+  view.setUint32(4, 36 + length * 2, true);
+  writeStr(8, "WAVE");
+  writeStr(12, "fmt ");
+  view.setUint32(16, 16, true); // fmt chunk size
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, 1, true); // mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true); // byte rate (mono, 16-bit)
+  view.setUint16(32, 2, true); // block align
+  view.setUint16(34, 16, true); // bits per sample
+  writeStr(36, "data");
+  view.setUint32(40, length * 2, true);
+
+  let offset = 44;
+  for (const c of chunks) {
+    for (let i = 0; i < c.length; i++) {
+      const s = Math.max(-1, Math.min(1, c[i]));
+      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+      offset += 2;
+    }
+  }
+
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
+interface PcmCapture {
+  pre: Float32Array[]; // ring snapshot at trigger time (immutable blocks)
+  post: Float32Array[]; // accumulates after the trigger
+  postRemaining: number; // post-roll samples still to collect
   resolve: (result: { url: string; blob: Blob } | undefined) => void;
 }
 
@@ -82,17 +124,20 @@ export function useMicrophone(
   const streamRef = useRef<MediaStream | null>(null);
   const ctxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
-  const recorderRef = useRef<MediaRecorder | null>(null);
 
-  // Pre-roll circular buffer
-  const preRollRef = useRef<Blob[]>([]);
-  const captureRef = useRef<CaptureState | null>(null);
+  // Raw-PCM capture graph
+  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const sinkRef = useRef<GainNode | null>(null);
+  const sampleRateRef = useRef(48000);
+
+  // Pre-roll PCM ring buffer (list of immutable sample blocks + running length)
+  const pcmRingRef = useRef<Float32Array[]>([]);
+  const pcmRingLenRef = useRef(0);
+  // Active captures — an array so overlapping events each get their own clip.
+  const capturesRef = useRef<PcmCapture[]>([]);
 
   // Spectrogram history
   const fftHistoryRef = useRef<number[][]>([]);
-
-  // Preferred MIME type, detected once
-  const mimeRef = useRef<string>("");
 
   const enable = useCallback(async () => {
     try {
@@ -113,46 +158,62 @@ export function useMicrophone(
 
       const ctx = new AudioContext();
       ctxRef.current = ctx;
+      sampleRateRef.current = ctx.sampleRate;
       const source = ctx.createMediaStreamSource(stream);
       const analyser = ctx.createAnalyser();
       analyser.fftSize = FFT_SIZE;
       source.connect(analyser);
       analyserRef.current = analyser;
 
-      // Pick MIME type once
-      const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-        ? "audio/webm;codecs=opus"
-        : MediaRecorder.isTypeSupported("audio/webm")
-        ? "audio/webm"
-        : "";
-      mimeRef.current = mime;
+      // Raw-PCM tap for clip capture. ScriptProcessor is deprecated but is the
+      // one path that works on Android Chrome AND iOS Safari without shipping a
+      // separate AudioWorklet module. Route it through a muted gain node so it
+      // stays live in the graph (onaudioprocess only fires when connected to the
+      // destination) without feeding the mic back to the speakers.
+      pcmRingRef.current = [];
+      pcmRingLenRef.current = 0;
+      capturesRef.current = [];
+      const processor = ctx.createScriptProcessor(PCM_BLOCK, 1, 1);
+      const preRollCap = Math.ceil(PRE_ROLL_SEC * ctx.sampleRate);
+      processor.onaudioprocess = (e) => {
+        const input = e.inputBuffer.getChannelData(0);
+        // Copy — the audio thread reuses the input buffer after this returns.
+        const block = new Float32Array(input.length);
+        block.set(input);
 
-      // Continuous pre-roll recorder
-      const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
-      rec.ondataavailable = (e) => {
-        if (e.data.size === 0) return;
-
-        // Always update pre-roll ring buffer
-        preRollRef.current.push(e.data);
-        if (preRollRef.current.length > PRE_ROLL_CHUNKS) {
-          preRollRef.current.shift();
+        // Push into the pre-roll ring, dropping oldest blocks past ~PRE_ROLL_SEC.
+        const ring = pcmRingRef.current;
+        ring.push(block);
+        pcmRingLenRef.current += block.length;
+        while (ring.length > 1 && pcmRingLenRef.current - ring[0].length >= preRollCap) {
+          pcmRingLenRef.current -= ring.shift()!.length;
         }
 
-        // Collect post-roll chunks for active capture
-        const cap = captureRef.current;
-        if (cap) {
-          cap.post.push(e.data);
-          cap.remaining--;
-          if (cap.remaining <= 0) {
-            const allChunks = [...cap.pre, ...cap.post];
-            const blob = new Blob(allChunks, { type: mime || "audio/webm" });
-            cap.resolve({ url: URL.createObjectURL(blob), blob });
-            captureRef.current = null;
+        // Feed every in-flight capture's post-roll; finalize the ones that filled.
+        const caps = capturesRef.current;
+        if (caps.length > 0) {
+          const done: PcmCapture[] = [];
+          for (const c of caps) {
+            c.post.push(block);
+            c.postRemaining -= block.length;
+            if (c.postRemaining <= 0) done.push(c);
+          }
+          for (const c of done) {
+            const wav = encodeWav([...c.pre, ...c.post], sampleRateRef.current);
+            c.resolve({ url: URL.createObjectURL(wav), blob: wav });
+          }
+          if (done.length > 0) {
+            capturesRef.current = caps.filter((c) => !done.includes(c));
           }
         }
       };
-      rec.start(CHUNK_MS);
-      recorderRef.current = rec;
+      const sink = ctx.createGain();
+      sink.gain.value = 0;
+      source.connect(processor);
+      processor.connect(sink);
+      sink.connect(ctx.destination);
+      processorRef.current = processor;
+      sinkRef.current = sink;
 
       setStatus("settling");
       baselineRef.current.reset();
@@ -161,16 +222,18 @@ export function useMicrophone(
     }
   }, []);
 
-  // Snapshot pre-roll + collect 2s post-roll
+  // Snapshot the pre-roll ring now, then collect POST_ROLL_SEC of PCM. Every call
+  // registers its own capture, so events that overlap a prior capture still get a
+  // clip (no more "some rows have a player, some don't").
   const triggerCapture = useCallback((): Promise<{ url: string; blob: Blob } | undefined> => {
-    if (captureRef.current) return Promise.resolve(undefined);
+    if (!processorRef.current) return Promise.resolve(undefined);
     return new Promise((resolve) => {
-      captureRef.current = {
-        pre: [...preRollRef.current],
+      capturesRef.current.push({
+        pre: pcmRingRef.current.slice(),
         post: [],
-        remaining: POST_ROLL_CHUNKS,
+        postRemaining: Math.ceil(POST_ROLL_SEC * sampleRateRef.current),
         resolve,
-      };
+      });
     });
   }, []);
 
@@ -314,10 +377,20 @@ export function useMicrophone(
   useEffect(() => {
     if (!active) {
       if (intervalRef.current) clearInterval(intervalRef.current);
-      if (recorderRef.current && recorderRef.current.state !== "inactive") {
-        recorderRef.current.stop();
+      if (processorRef.current) {
+        processorRef.current.disconnect();
+        processorRef.current.onaudioprocess = null;
+        processorRef.current = null;
       }
-      recorderRef.current = null;
+      if (sinkRef.current) {
+        sinkRef.current.disconnect();
+        sinkRef.current = null;
+      }
+      // Resolve any in-flight captures so their events still log (clip-less).
+      capturesRef.current.forEach((c) => c.resolve(undefined));
+      capturesRef.current = [];
+      pcmRingRef.current = [];
+      pcmRingLenRef.current = 0;
       ctxRef.current?.close();
       ctxRef.current = null;
       streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -326,8 +399,6 @@ export function useMicrophone(
       emaRef.current = null;
       historyRef.current = [];
       fftHistoryRef.current = [];
-      preRollRef.current = [];
-      captureRef.current = null;
       skipCountRef.current = 0;
       visualTickRef.current = 0;
       baselineRef.current.reset();
@@ -346,9 +417,11 @@ export function useMicrophone(
   useEffect(() => {
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
-      if (recorderRef.current && recorderRef.current.state !== "inactive") {
-        recorderRef.current.stop();
+      if (processorRef.current) {
+        processorRef.current.disconnect();
+        processorRef.current.onaudioprocess = null;
       }
+      sinkRef.current?.disconnect();
       ctxRef.current?.close();
       streamRef.current?.getTracks().forEach((t) => t.stop());
     };

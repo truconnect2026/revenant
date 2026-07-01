@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const fd = new FormData();
-    fd.append("file", audio as Blob, "clip.webm");
+    fd.append("file", audio as Blob, "clip.wav");
     fd.append("model", "whisper-1");
     fd.append("language", "en");
 
