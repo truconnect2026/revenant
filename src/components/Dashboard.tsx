@@ -35,6 +35,8 @@ export function Dashboard() {
   const [introSeen, setIntroSeen] = useState<boolean | null>(null);
   const [sentryArmed, setSentryArmed] = useState(false);
   const [sentryLevel, setSentryLevel] = useState<SentryLevel>("med");
+  // Which channels take part in a session (include/exclude). Default: all on.
+  const [channelOn, setChannelOn] = useState({ emf: true, sound: true, motion: true });
 
   const settingsRef = useRef({ haptics: true, soundCue: false });
   settingsRef.current = { haptics, soundCue };
@@ -69,6 +71,11 @@ export function Dashboard() {
       if (h !== null) setHaptics(h === "1");
       if (s !== null) setSoundCue(s === "1");
       if (lvl === "low" || lvl === "med" || lvl === "high") setSentryLevel(lvl);
+      const ch = localStorage.getItem("revenant.channels");
+      if (ch) {
+        const p = JSON.parse(ch) as Partial<Record<"emf" | "sound" | "motion", boolean>>;
+        setChannelOn({ emf: p.emf !== false, sound: p.sound !== false, motion: p.motion !== false });
+      }
       setIntroSeen(localStorage.getItem("revenant.introSeen") === "1");
     } catch {
       setIntroSeen(true);
@@ -169,15 +176,33 @@ export function Dashboard() {
     ).catch(() => {});
   }, []);
 
-  const emf = useMagnetometer(running, addEvent);
-  const sound = useMicrophone(running, addEvent);
-  const motion = useMotion(running, addEvent, sentryArmed, sentryLevel);
+  // Per-channel active = session running AND this channel included. An excluded
+  // channel has active=false, so its hook holds no resources and never samples.
+  const emf = useMagnetometer(running && channelOn.emf, addEvent);
+  const sound = useMicrophone(running && channelOn.sound, addEvent);
+  const motion = useMotion(running && channelOn.motion, addEvent, sentryArmed, sentryLevel);
 
   const toggleSentry = useCallback(() => setSentryArmed((a) => !a), []);
   const changeSentryLevel = useCallback((l: SentryLevel) => {
     setSentryLevel(l);
     try { localStorage.setItem("revenant.sentryLevel", l); } catch {}
   }, []);
+
+  // Include/exclude a channel. Persists, and mid-session turns it on/off cleanly.
+  const toggleChannel = useCallback((ch: "emf" | "sound" | "motion") => {
+    const turningOn = !channelOn[ch];
+    const next = { ...channelOn, [ch]: turningOn };
+    setChannelOn(next);
+    try { localStorage.setItem("revenant.channels", JSON.stringify(next)); } catch {}
+    // Turning ON mid-session: fire enable() in THIS tap so the mic/motion
+    // permission request stays inside the user gesture (iOS requirement).
+    if (running && turningOn) {
+      if (ch === "sound") sound.enable();
+      else if (ch === "motion") motion.enable();
+      else if (ch === "emf" && emf.status !== "no-channel") emf.enable();
+    }
+    // Turning OFF: active flips false → that hook tears itself down; others untouched.
+  }, [channelOn, running, sound, motion, emf]);
 
   const startSession = async () => {
     // Revoke any leftover URLs from the previous session
@@ -189,19 +214,21 @@ export function Dashboard() {
     startedAtRef.current = Date.now();
     setEvents([]);
 
-    // Fire ALL sensor enable()s synchronously inside the tap, BEFORE any await.
-    // On iOS, DeviceMotionEvent.requestPermission() (called inside motion.enable)
-    // only succeeds while the user-gesture chain is intact — any preceding await
-    // breaks that chain and the prompt auto-denies. So no await may run first.
-    emf.enable();
-    const soundP = sound.enable();
-    const motionP = motion.enable();
+    // One-tap start: arm every INCLUDED channel. The permission-triggering calls
+    // (mic getUserMedia, motion requestPermission) must fire SYNCHRONOUSLY inside
+    // the tap, before any await — iOS auto-denies otherwise. So fire those first,
+    // then the sync magnetometer, then anything async. An excluded channel's
+    // enable() is never called, so it requests no permission and holds no mic/
+    // listener.
+    const soundP = channelOn.sound ? sound.enable() : null;
+    const motionP = channelOn.motion ? motion.enable() : null;
+    if (channelOn.emf && emf.status !== "no-channel") emf.enable();
 
     // Wake lock is best-effort; fire-and-forget AFTER the enables so its await
-    // never severs the gesture chain the motion permission prompt depends on.
+    // never severs the gesture chain the permission prompts depend on.
     acquireWakeLock();
 
-    await Promise.all([soundP, motionP]).catch(() => {});
+    await Promise.all([soundP, motionP].filter(Boolean) as Promise<void>[]).catch(() => {});
 
     setRunning(true);
   };
@@ -240,9 +267,9 @@ export function Dashboard() {
   const handleRecalibrate = () => {
     setEvents([]);
     eventsRef.current = [];
-    emf.recalibrate();
-    sound.recalibrate();
-    motion.recalibrate();
+    if (channelOn.emf) emf.recalibrate();
+    if (channelOn.sound) sound.recalibrate();
+    if (channelOn.motion) motion.recalibrate();
   };
 
   // Latest event id per channel — changes drive each card's one-shot reaction.
@@ -328,8 +355,10 @@ export function Dashboard() {
             reading={emf}
             onEnable={emf.enable}
             color="#22d3ee"
-            running={running}
             pulseId={latestByChannel.emf}
+            included={channelOn.emf}
+            onToggleInclude={() => toggleChannel("emf")}
+            toggleDisabled={emf.status === "no-channel"}
             noChannelMessage="Not exposed by this browser. Use Chrome/Edge on Android over HTTPS, or pair an external Bluetooth magnetometer on iPhone."
           />
           <SensorPanel
@@ -338,8 +367,9 @@ export function Dashboard() {
             reading={sound}
             onEnable={sound.enable}
             color="#34d399"
-            running={running}
             pulseId={latestByChannel.sound}
+            included={channelOn.sound}
+            onToggleInclude={() => toggleChannel("sound")}
           />
           <SensorPanel
             title="Motion"
@@ -347,8 +377,9 @@ export function Dashboard() {
             reading={motion}
             onEnable={motion.enable}
             color="#fbbf24"
-            running={running}
             pulseId={latestByChannel.motion}
+            included={channelOn.motion}
+            onToggleInclude={() => toggleChannel("motion")}
             sentry={
               running
                 ? {
