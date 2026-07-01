@@ -35,6 +35,8 @@ export const SensorPanel = memo(function SensorPanel({
   } = reading;
 
   const fault = status === "no-channel" || status === "blocked";
+  const hi = history.length ? Math.max(...history) : null;
+  const lo = history.length ? Math.min(...history) : null;
 
   // Identity header — accent bar + name + status LED — shared by every state.
   const header = (
@@ -100,9 +102,22 @@ export const SensorPanel = memo(function SensorPanel({
         </div>
       )}
 
-      {/* Row 2 — oscilloscope trace in a recessed readout well */}
-      <div className="readout-well p-2">
+      {/* Row 2 — oscilloscope trace in a recessed readout well, with axis labels */}
+      <div className="readout-well relative p-2">
         <CanvasSparkline data={history} color={color} height={30} />
+        <span className="absolute top-1 left-1.5 text-[8px] font-mono uppercase text-zinc-600 leading-none pointer-events-none">
+          {unit}
+        </span>
+        {hi !== null && lo !== null && (
+          <>
+            <span className="absolute top-1 right-1.5 text-[8px] font-mono tabular-nums text-zinc-600 leading-none pointer-events-none">
+              {hi.toFixed(0)}
+            </span>
+            <span className="absolute bottom-1 right-1.5 text-[8px] font-mono tabular-nums text-zinc-600 leading-none pointer-events-none">
+              {lo.toFixed(0)}
+            </span>
+          </>
+        )}
       </div>
 
       {/* Row 3 — compact deviation meter */}

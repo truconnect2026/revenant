@@ -30,7 +30,7 @@ export function DeviationBar({ sigma, threshold, color = "#34d399" }: DeviationB
     >
       <div className="relative flex-1 h-1.5 rounded-sm bg-black/40 ring-1 ring-inset ring-white/5 overflow-hidden">
         <div
-          className="absolute inset-y-0 left-0 rounded-sm transition-[width] duration-100 ease-out"
+          className="meter-fill absolute inset-y-0 left-0 rounded-sm"
           style={{ width: `${pct}%`, backgroundColor: fill }}
         />
         {/* Threshold marker */}

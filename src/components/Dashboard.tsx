@@ -12,12 +12,21 @@ import { SessionHistory } from "./SessionHistory";
 
 const MAX_EVENTS = 200;
 
+function fmtElapsed(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const hh = String(Math.floor(s / 3600)).padStart(2, "0");
+  const mm = String(Math.floor((s % 3600) / 60)).padStart(2, "0");
+  const ss = String(s % 60).padStart(2, "0");
+  return `${hh}:${mm}:${ss}`;
+}
+
 export function Dashboard() {
   const [running, setRunning] = useState(false);
   const [events, setEvents] = useState<AnomalyEvent[]>([]);
   const [sessionLabel, setSessionLabel] = useState("");
   const [pastSessions, setPastSessions] = useState<SessionData[]>([]);
   const [transcribeEnabled, setTranscribeEnabled] = useState(false);
+  const [nowTs, setNowTs] = useState(0);
 
   const sessionIdRef = useRef<string>("");
   const startedAtRef = useRef<number>(0);
@@ -65,6 +74,15 @@ export function Dashboard() {
     document.addEventListener("visibilitychange", handler);
     return () => document.removeEventListener("visibilitychange", handler);
   }, [running, acquireWakeLock]);
+
+  // Session-elapsed clock — ticks once a second while recording.
+  useEffect(() => {
+    if (!running) return;
+    setNowTs(Date.now());
+    const id = setInterval(() => setNowTs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [running]);
+  const elapsedMs = running && startedAtRef.current ? nowTs - startedAtRef.current : 0;
 
   const coords = useGeolocation(running);
   const coordsRef = useRef(coords);
@@ -186,10 +204,26 @@ export function Dashboard() {
             <h1 className="font-display text-lg font-bold tracking-[0.2em] text-zinc-100 leading-none">
               REVENANT
             </h1>
-            <p className="text-[10px] font-display uppercase tracking-[0.18em] text-zinc-500 mt-1">
-              Environmental Sensor Readout
-              {coords && <span className="text-zinc-600 normal-case tracking-normal font-mono"> · {coords.lat}, {coords.lng}</span>}
-            </p>
+            <div className="mt-1.5 flex items-center gap-2 leading-none">
+              {running ? (
+                <span className="flex items-center gap-1.5 text-[10px] font-display font-semibold uppercase tracking-[0.18em] text-red-400">
+                  <span className="rec-dot inline-block w-2 h-2 rounded-full bg-red-500" />
+                  REC
+                </span>
+              ) : (
+                <span className="text-[10px] font-display font-semibold uppercase tracking-[0.18em] text-zinc-500">
+                  Standby
+                </span>
+              )}
+              <span className="font-mono text-[11px] tabular-nums text-zinc-300">
+                {fmtElapsed(elapsedMs)}
+              </span>
+              {coords && (
+                <span className="hidden sm:inline font-mono text-[10px] text-zinc-600">
+                  · {coords.lat}, {coords.lng}
+                </span>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             {!running && (

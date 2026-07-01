@@ -5,6 +5,17 @@
 :root {
   --scope-bg: #0c0f14;
   --scope-grid: rgba(100, 120, 140, 0.06);
+
+  /* Unified motion language — one signature curve + one timing scale, shared by
+     every discrete transition and animation so the whole UI moves as one
+     instrument. (Constant-velocity ambient drift is the sole exception: it must
+     stay linear or it visibly stutters.) */
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --t-1: 120ms;   /* taps, presses */
+  --t-2: 220ms;   /* state changes, meter fill, glow */
+  --t-3: 360ms;   /* deliberate transitions */
+  --t-flash: 820ms;   /* one-shot event highlight */
+  --t-breathe: 2400ms; /* ambient LED / REC pulse */
 }
 
 /* Scope-glass dark background */
@@ -50,17 +61,31 @@
   background: radial-gradient(125% 95% at 50% 32%, transparent 55%, rgba(0, 0, 0, 0.5) 100%);
 }
 
-/* Tactile button press. */
+/* Tactile button press — unified curve/timing. */
 .btn-press {
   transition:
-    transform 120ms ease-out,
-    background-color 160ms ease-out,
-    border-color 160ms ease-out,
-    color 160ms ease-out,
-    box-shadow 160ms ease-out;
+    transform var(--t-1) var(--ease),
+    background-color var(--t-2) var(--ease),
+    border-color var(--t-2) var(--ease),
+    color var(--t-2) var(--ease),
+    box-shadow var(--t-2) var(--ease);
 }
 .btn-press:active {
   transform: scale(0.96);
+}
+
+/* Meter fill — the one place a width animates; shares the motion language. */
+.meter-fill {
+  transition: width var(--t-2) var(--ease), background-color var(--t-2) var(--ease);
+}
+
+/* Recording pulse for the REC indicator dot. */
+@keyframes rec-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.4; transform: scale(0.82); }
+}
+.rec-dot {
+  animation: rec-pulse var(--t-breathe) var(--ease) infinite;
 }
 
 /* Item 1 — breathing pulse for LIVE / SETTLING status dots. Slow, calm, and
@@ -70,7 +95,7 @@
   50%      { opacity: 1;    transform: scale(1.12); }
 }
 .led-breathe {
-  animation: led-breathe 2.4s ease-in-out infinite;
+  animation: led-breathe var(--t-breathe) var(--ease) infinite;
   will-change: opacity, transform;
 }
 
@@ -100,7 +125,7 @@
   100% { background-color: rgba(39, 39, 42, 0.5); }
 }
 .event-flash {
-  animation: event-flash 0.85s ease-out 1;
+  animation: event-flash var(--t-flash) var(--ease) 1;
 }
 
 /* Scrollbar */
