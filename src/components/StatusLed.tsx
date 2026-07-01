@@ -1,27 +1,29 @@
 "use client";
 import { SensorStatus } from "@/lib/types";
 
-// `pulse` marks channels that are actively working (settling into or holding a
-// baseline) so their dot breathes; standby/blocked/no-channel stay static.
-const STATUS_CONFIG: Record<SensorStatus, { color: string; label: string; pulse: boolean }> = {
-  standby:     { color: "bg-amber-500/60",  label: "STANDBY",    pulse: false },
-  settling:    { color: "bg-amber-400",     label: "SETTLING",   pulse: true  },
-  live:        { color: "bg-emerald-400",   label: "LIVE",       pulse: true  },
-  blocked:     { color: "bg-red-500",       label: "BLOCKED",    pulse: false },
-  "no-channel":{ color: "bg-zinc-500",      label: "NO CHANNEL", pulse: false },
+const LABELS: Record<SensorStatus, string> = {
+  standby: "STANDBY",
+  settling: "SETTLING",
+  live: "LIVE",
+  blocked: "BLOCKED",
+  "no-channel": "NO CHANNEL",
 };
 
-export function StatusLed({ status }: { status: SensorStatus }) {
-  const cfg = STATUS_CONFIG[status];
+// The dot carries the only color: the channel accent when the instrument is
+// active (live/settling), red for a fault, neutral otherwise. Active dots
+// breathe. The label stays neutral so color never scatters.
+export function StatusLed({ status, accent = "#a1a1aa" }: { status: SensorStatus; accent?: string }) {
+  const active = status === "live" || status === "settling";
+  const dotColor = status === "blocked" ? "#f87171" : active ? accent : "#52525b";
+
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-1.5">
       <span
-        className={`inline-block w-2.5 h-2.5 rounded-full ${cfg.color} ${
-          cfg.pulse ? "led-breathe" : ""
-        }`}
+        className={`inline-block w-2 h-2 rounded-full ${active ? "led-breathe" : ""}`}
+        style={{ backgroundColor: dotColor }}
       />
-      <span className="text-[10px] font-mono uppercase tracking-widest text-zinc-400">
-        {cfg.label}
+      <span className="text-[10px] font-display font-medium uppercase tracking-[0.15em] text-zinc-400">
+        {LABELS[status]}
       </span>
     </div>
   );

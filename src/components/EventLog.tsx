@@ -15,6 +15,13 @@ const CHANNEL_COLORS: Record<string, string> = {
   motion: "text-amber-400",
 };
 
+// Solid channel accent (hex) for the row's left rule.
+const CHANNEL_HEX: Record<string, string> = {
+  emf: "#22d3ee",
+  sound: "#34d399",
+  motion: "#fbbf24",
+};
+
 // Entry-flash tint per channel (matches the CHANNEL_COLORS hues at low alpha).
 const CHANNEL_FLASH: Record<string, string> = {
   emf: "rgba(34, 211, 238, 0.26)",
@@ -59,7 +66,7 @@ export function EventLog({ events, className = "", transcribeEnabled = false }: 
 
   if (events.length === 0) {
     return (
-      <div className={`flex items-center justify-center text-xs font-mono text-zinc-600 ${className}`}>
+      <div className={`flex items-center justify-center text-[11px] font-mono text-zinc-600 ${className}`}>
         No anomaly events recorded.
       </div>
     );
@@ -70,23 +77,26 @@ export function EventLog({ events, className = "", transcribeEnabled = false }: 
       {[...events].reverse().map((ev) => (
         <div
           key={ev.id}
-          className="event-row event-flash flex flex-col px-3 py-1.5 rounded border border-zinc-700/30 gap-1"
-          style={{ "--flash-color": CHANNEL_FLASH[ev.channel] ?? "rgba(161, 161, 170, 0.24)" } as CSSProperties}
+          className="event-row event-flash flex flex-col pl-2.5 pr-3 py-1.5 rounded-sm border border-zinc-800/70 border-l-2 gap-1"
+          style={{
+            "--flash-color": CHANNEL_FLASH[ev.channel] ?? "rgba(161, 161, 170, 0.24)",
+            borderLeftColor: CHANNEL_HEX[ev.channel] ?? "#a1a1aa",
+          } as CSSProperties}
         >
           {/* Main event row */}
-          <div className="flex items-center gap-3 text-xs font-mono">
-            <span className="text-zinc-500 w-16 shrink-0">{formatTime(ev.timestamp)}</span>
-            <span className={`w-8 shrink-0 font-semibold ${CHANNEL_COLORS[ev.channel]}`}>
+          <div className="flex items-center gap-2.5 text-[11px] font-mono">
+            <span className="text-zinc-500 w-14 shrink-0 tabular-nums">{formatTime(ev.timestamp)}</span>
+            <span className={`w-8 shrink-0 font-display font-semibold tracking-wider ${CHANNEL_COLORS[ev.channel]}`}>
               {CHANNEL_LABELS[ev.channel]}
             </span>
             <span className="text-zinc-200 tabular-nums">
-              {ev.value} {ev.unit}
+              {ev.value} <span className="text-zinc-500">{ev.unit}</span>
             </span>
-            <span className="text-red-400 tabular-nums">
+            <span className="text-zinc-300 tabular-nums">
               {ev.sigma > 0 ? "+" : ""}
               {ev.sigma.toFixed(1)}&sigma;
             </span>
-            <span className="text-zinc-500 tabular-nums">
+            <span className="hidden sm:inline text-zinc-600 tabular-nums">
               &mu;={ev.mean}&plusmn;{ev.stddev}
             </span>
             <div className="ml-auto flex items-center gap-2 shrink-0">

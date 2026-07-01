@@ -22,17 +22,45 @@
   background-size: 40px 40px;
 }
 
-/* Panel glass effect.
-   The last shadow layer is a sigma-reactive outer glow driven by CSS vars set
-   per-card in SensorPanel; it stays transparent at baseline so the card looks
-   unchanged until a channel approaches its threshold. */
+/* Raised instrument bezel: top-lighter/bottom-darker face, a 1px top inner
+   highlight and 1px bottom inner shadow, over a soft drop shadow. Establishes
+   elevation: background < card. */
 .panel-card {
+  background-image: linear-gradient(180deg, rgba(42, 46, 54, 0.72), rgba(22, 25, 30, 0.74));
+  border: 1px solid rgba(255, 255, 255, 0.07);
   box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.07),
     inset 0 1px 0 rgba(255, 255, 255, 0.06),
-    0 4px 20px rgba(0, 0, 0, 0.5),
-    0 0 var(--glow-blur, 0px) 0 var(--glow-color, transparent);
-  transition: box-shadow 220ms ease-out;
+    inset 0 -1px 0 rgba(0, 0, 0, 0.45),
+    0 2px 12px rgba(0, 0, 0, 0.45);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+
+/* Recessed readout well — the innermost elevation the trace/meter sit in. */
+.readout-well {
+  background: rgba(0, 0, 0, 0.28);
+  border-radius: 6px;
+  box-shadow:
+    inset 0 1px 2px rgba(0, 0, 0, 0.55),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+}
+
+/* Edge vignette — darkens the corners to pull focus toward the readouts. */
+.vignette {
+  background: radial-gradient(125% 95% at 50% 32%, transparent 55%, rgba(0, 0, 0, 0.5) 100%);
+}
+
+/* Tactile button press. */
+.btn-press {
+  transition:
+    transform 120ms ease-out,
+    background-color 160ms ease-out,
+    border-color 160ms ease-out,
+    color 160ms ease-out,
+    box-shadow 160ms ease-out;
+}
+.btn-press:active {
+  transform: scale(0.96);
 }
 
 /* Item 1 — breathing pulse for LIVE / SETTLING status dots. Slow, calm, and

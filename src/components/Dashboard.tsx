@@ -177,32 +177,34 @@ export function Dashboard() {
   return (
     <div className="min-h-screen bg-scope text-zinc-100 flex flex-col">
       <div className="graticule graticule-anim fixed inset-0 pointer-events-none z-0" />
+      <div className="vignette fixed inset-0 pointer-events-none z-0" />
 
-      <div className="relative z-10 max-w-7xl w-full mx-auto px-4 py-6 flex flex-col flex-1">
+      <div className="relative z-10 max-w-6xl w-full mx-auto px-4 py-4 flex flex-col flex-1 gap-4">
         {/* Header */}
-        <header className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
-          <div>
-            <h1 className="font-display text-2xl font-bold tracking-tight text-zinc-100">
+        <header className="flex items-center justify-between gap-3 pb-3 border-b border-zinc-800/80">
+          <div className="min-w-0">
+            <h1 className="font-display text-lg font-bold tracking-[0.2em] text-zinc-100 leading-none">
               REVENANT
             </h1>
-            <p className="text-[11px] font-mono text-zinc-500 mt-0.5">
+            <p className="text-[10px] font-display uppercase tracking-[0.18em] text-zinc-500 mt-1">
               Environmental Sensor Readout
+              {coords && <span className="text-zinc-600 normal-case tracking-normal font-mono"> · {coords.lat}, {coords.lng}</span>}
             </p>
           </div>
-          <div className="flex items-center gap-2 flex-wrap justify-end">
+          <div className="flex items-center gap-2 shrink-0">
             {!running && (
               <input
                 type="text"
-                placeholder="Session label (optional)"
+                placeholder="Session label"
                 value={sessionLabel}
                 onChange={(e) => setSessionLabel(e.target.value)}
-                className="bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-xs font-mono text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 w-44"
+                className="hidden sm:block bg-zinc-900 border border-zinc-700 rounded px-3 py-1.5 text-xs font-mono text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 w-40"
               />
             )}
             {running && (
               <button
                 onClick={handleRecalibrate}
-                className="px-3 py-2 text-xs font-mono uppercase font-semibold rounded border border-zinc-600 text-zinc-400 hover:text-zinc-200 hover:border-zinc-500 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500"
+                className="btn-press px-3 py-1.5 text-[10px] font-display uppercase tracking-wider font-semibold rounded border border-zinc-600 text-zinc-400 hover:text-zinc-200 hover:border-zinc-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500"
                 title="Clear events and re-establish baselines"
               >
                 Recalibrate
@@ -210,26 +212,19 @@ export function Dashboard() {
             )}
             <button
               onClick={running ? stopSession : startSession}
-              className={`px-5 py-2 text-xs font-mono uppercase font-semibold rounded transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-900 ${
+              className={`btn-press px-4 py-1.5 text-[11px] font-display uppercase tracking-wider font-semibold rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-900 ${
                 running
                   ? "bg-red-600 hover:bg-red-500 focus-visible:ring-red-500 text-white"
                   : "bg-emerald-600 hover:bg-emerald-500 focus-visible:ring-emerald-500 text-white"
               }`}
             >
-              {running ? "Stop Session" : "Start Session"}
+              {running ? "Stop" : "Start Session"}
             </button>
           </div>
         </header>
 
-        {/* Coordinates */}
-        {coords && (
-          <div className="text-[10px] font-mono text-zinc-500 mb-4">
-            LOC {coords.lat}, {coords.lng}
-          </div>
-        )}
-
-        {/* Sensor Panels */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6 items-stretch">
+        {/* Sensor strips — all three visible without scrolling on a phone */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-start">
           <SensorPanel
             title="EMF"
             channelId="magnetometer"
@@ -237,7 +232,7 @@ export function Dashboard() {
             onEnable={emf.enable}
             color="#22d3ee"
             running={running}
-            noChannelMessage="Magnetometer is not exposed by this browser. Available in Chrome/Edge on Android over HTTPS. On iPhone, pair an external Bluetooth magnetometer via a native app."
+            noChannelMessage="Not exposed by this browser. Use Chrome/Edge on Android over HTTPS, or pair an external Bluetooth magnetometer on iPhone."
           />
           <SensorPanel
             title="Sound"
@@ -257,26 +252,32 @@ export function Dashboard() {
           />
         </div>
 
-        {/* Event Log */}
-        <section className="flex flex-col flex-1 min-h-0 mb-0">
-          <h2 className="font-display text-sm font-semibold uppercase tracking-wider text-zinc-400 mb-2">
-            Event Log
-          </h2>
-          <EventLog
-            events={events}
-            className="flex-1 min-h-[5rem]"
-            transcribeEnabled={transcribeEnabled}
-          />
+        {/* Event Log — the record of the investigation */}
+        <section className="flex flex-col flex-1 min-h-[8rem]">
+          <div className="panel-card rounded-lg flex flex-col flex-1 min-h-0 overflow-hidden">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800/80 shrink-0">
+              <h2 className="font-display text-xs font-semibold uppercase tracking-[0.15em] text-zinc-300">
+                Event Log
+              </h2>
+              <span className="text-[10px] font-mono tabular-nums text-zinc-500">
+                {events.length} {events.length === 1 ? "event" : "events"}
+              </span>
+            </div>
+            <EventLog
+              events={events}
+              className="flex-1 min-h-0 p-2"
+              transcribeEnabled={transcribeEnabled}
+            />
+          </div>
         </section>
 
         {/* Past sessions */}
         {!running && <SessionHistory sessions={pastSessions} onSessionsChange={setPastSessions} />}
 
         {/* Footer */}
-        <footer className="mt-6 text-center text-[10px] font-mono text-zinc-600">
-          Revenant reads real device sensors. It does not synthesize, randomize, or simulate data.
-          <br />
-          It does not detect the paranormal. It reports environmental deviation from baseline.
+        <footer className="text-center text-[10px] font-mono text-zinc-600 leading-relaxed">
+          Reads real device sensors — no synthesized, randomized, or simulated data.
+          Reports environmental deviation from baseline, not the paranormal.
         </footer>
       </div>
     </div>
