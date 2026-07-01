@@ -1,9 +1,10 @@
 "use client";
 import { memo, useEffect, useRef, useState } from "react";
-import { SensorReading } from "@/lib/types";
+import { SensorReading, SentryLevel, SentryPhase } from "@/lib/types";
 import { StatusLed } from "./StatusLed";
 import { CanvasSparkline } from "./CanvasSparkline";
 import { DeviationBar } from "./DeviationBar";
+import { SentryControl } from "./SentryControl";
 
 function hexToRgba(hex: string, alpha: number): string {
   const h = hex.replace("#", "");
@@ -19,6 +20,13 @@ interface SensorPanelProps {
   noChannelMessage?: string;
   running?: boolean;
   pulseId?: string; // id of this channel's latest event — drives the anomaly beat
+  sentry?: {
+    armed: boolean;
+    phase: SentryPhase;
+    level: SentryLevel;
+    onToggle: () => void;
+    onLevel: (l: SentryLevel) => void;
+  };
 }
 
 export const SensorPanel = memo(function SensorPanel({
@@ -30,6 +38,7 @@ export const SensorPanel = memo(function SensorPanel({
   noChannelMessage,
   running = false,
   pulseId,
+  sentry,
 }: SensorPanelProps) {
   const {
     status, value, secondaryValue, unit, secondaryUnit,
@@ -163,6 +172,18 @@ export const SensorPanel = memo(function SensorPanel({
           </button>
         ) : null}
       </div>
+
+      {/* Sentry Mode (Motion only) */}
+      {sentry && (
+        <SentryControl
+          armed={sentry.armed}
+          phase={sentry.phase}
+          level={sentry.level}
+          accent={color}
+          onToggle={sentry.onToggle}
+          onLevel={sentry.onLevel}
+        />
+      )}
     </div>
   );
 });

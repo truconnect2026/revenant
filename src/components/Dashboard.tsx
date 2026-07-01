@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AnomalyEvent, SessionData } from "@/lib/types";
+import { AnomalyEvent, SessionData, SentryLevel } from "@/lib/types";
 import { idbSaveSession, idbLoadSessions } from "@/lib/idb";
 import { hapticTap, soundTick } from "@/lib/feedback";
 import { useMagnetometer } from "@/hooks/useMagnetometer";
@@ -33,6 +33,8 @@ export function Dashboard() {
   const [haptics, setHaptics] = useState(true);
   const [soundCue, setSoundCue] = useState(false);
   const [introSeen, setIntroSeen] = useState<boolean | null>(null);
+  const [sentryArmed, setSentryArmed] = useState(false);
+  const [sentryLevel, setSentryLevel] = useState<SentryLevel>("med");
 
   const settingsRef = useRef({ haptics: true, soundCue: false });
   settingsRef.current = { haptics, soundCue };
@@ -63,8 +65,10 @@ export function Dashboard() {
     try {
       const h = localStorage.getItem("revenant.haptics");
       const s = localStorage.getItem("revenant.sound");
+      const lvl = localStorage.getItem("revenant.sentryLevel");
       if (h !== null) setHaptics(h === "1");
       if (s !== null) setSoundCue(s === "1");
+      if (lvl === "low" || lvl === "med" || lvl === "high") setSentryLevel(lvl);
       setIntroSeen(localStorage.getItem("revenant.introSeen") === "1");
     } catch {
       setIntroSeen(true);
@@ -167,7 +171,13 @@ export function Dashboard() {
 
   const emf = useMagnetometer(running, addEvent);
   const sound = useMicrophone(running, addEvent);
-  const motion = useMotion(running, addEvent);
+  const motion = useMotion(running, addEvent, sentryArmed, sentryLevel);
+
+  const toggleSentry = useCallback(() => setSentryArmed((a) => !a), []);
+  const changeSentryLevel = useCallback((l: SentryLevel) => {
+    setSentryLevel(l);
+    try { localStorage.setItem("revenant.sentryLevel", l); } catch {}
+  }, []);
 
   const startSession = async () => {
     // Revoke any leftover URLs from the previous session
@@ -198,6 +208,7 @@ export function Dashboard() {
 
   const stopSession = async () => {
     setRunning(false);
+    setSentryArmed(false);
     releaseWakeLock();
 
     const session: SessionData = {
@@ -338,6 +349,17 @@ export function Dashboard() {
             color="#fbbf24"
             running={running}
             pulseId={latestByChannel.motion}
+            sentry={
+              running
+                ? {
+                    armed: sentryArmed,
+                    phase: motion.sentryPhase,
+                    level: sentryLevel,
+                    onToggle: toggleSentry,
+                    onLevel: changeSentryLevel,
+                  }
+                : undefined
+            }
           />
         </div>
 

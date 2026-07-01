@@ -5,6 +5,10 @@ export type SensorStatus =
   | "blocked"
   | "no-channel";
 
+// Motion "Sentry Mode" — an armed, high-sensitivity watch.
+export type SentryLevel = "low" | "med" | "high";
+export type SentryPhase = "off" | "arming" | "armed" | "triggered";
+
 export interface AnomalyEvent {
   id: string;
   channel: "emf" | "sound" | "motion";
