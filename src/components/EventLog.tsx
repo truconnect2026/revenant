@@ -77,7 +77,7 @@ export function EventLog({ events, className = "", transcribeEnabled = false }: 
       {[...events].reverse().map((ev) => (
         <div
           key={ev.id}
-          className="event-row event-flash flex flex-col pl-2.5 pr-3 py-1.5 rounded-sm border border-zinc-800/70 border-l-2 gap-1"
+          className="event-row event-flash event-enter flex flex-col pl-2.5 pr-3 py-1.5 rounded-sm border border-zinc-800/70 border-l-2 gap-1"
           style={{
             "--flash-color": CHANNEL_FLASH[ev.channel] ?? "rgba(161, 161, 170, 0.24)",
             borderLeftColor: CHANNEL_HEX[ev.channel] ?? "#a1a1aa",

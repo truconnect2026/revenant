@@ -1,5 +1,5 @@
 "use client";
-import { memo } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { SensorReading } from "@/lib/types";
 import { StatusLed } from "./StatusLed";
 import { CanvasSparkline } from "./CanvasSparkline";
@@ -18,6 +18,7 @@ interface SensorPanelProps {
   color?: string;
   noChannelMessage?: string;
   running?: boolean;
+  pulseId?: string; // id of this channel's latest event — drives the anomaly beat
 }
 
 export const SensorPanel = memo(function SensorPanel({
@@ -28,6 +29,7 @@ export const SensorPanel = memo(function SensorPanel({
   color = "#34d399",
   noChannelMessage,
   running = false,
+  pulseId,
 }: SensorPanelProps) {
   const {
     status, value, secondaryValue, unit, secondaryUnit,
@@ -37,6 +39,19 @@ export const SensorPanel = memo(function SensorPanel({
   const fault = status === "no-channel" || status === "blocked";
   const hi = history.length ? Math.max(...history) : null;
   const lo = history.length ? Math.min(...history) : null;
+
+  // One-shot card reaction when this channel fires a new event.
+  const [react, setReact] = useState(false);
+  const prevPulse = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (pulseId && pulseId !== prevPulse.current) {
+      prevPulse.current = pulseId;
+      setReact(true);
+      const t = setTimeout(() => setReact(false), 850);
+      return () => clearTimeout(t);
+    }
+    prevPulse.current = pulseId;
+  }, [pulseId]);
 
   // Identity header — accent bar + name + status LED — shared by every state.
   const header = (
@@ -71,7 +86,14 @@ export const SensorPanel = memo(function SensorPanel({
   }
 
   return (
-    <div className="panel-card rounded-lg p-3 flex flex-col gap-2">
+    <div className={`panel-card rounded-lg p-3 flex flex-col gap-2 relative ${react ? "card-react" : ""}`}>
+      {react && (
+        <span
+          aria-hidden
+          className="card-react-ring pointer-events-none absolute inset-0 rounded-lg"
+          style={{ boxShadow: `inset 0 0 0 1px ${hexToRgba(color, 0.9)}, 0 0 16px ${hexToRgba(color, 0.35)}` }}
+        />
+      )}
       {/* Row 1 — identity (left) + hero readout (right) */}
       <div className="flex items-start justify-between gap-3">
         {header}
@@ -80,7 +102,7 @@ export const SensorPanel = memo(function SensorPanel({
             <span
               aria-hidden
               className="absolute -z-10 -inset-x-3 -inset-y-2 rounded-full blur-md"
-              style={{ background: `radial-gradient(60% 100% at 70% 50%, ${hexToRgba(color, 0.2)}, transparent)` }}
+              style={{ background: `radial-gradient(60% 100% at 70% 50%, ${hexToRgba(color, 0.16)}, transparent)` }}
             />
           )}
           <span

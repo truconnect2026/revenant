@@ -1,7 +1,8 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnomalyEvent, SessionData } from "@/lib/types";
 import { idbSaveSession, idbLoadSessions } from "@/lib/idb";
+import { hapticTap, soundTick } from "@/lib/feedback";
 import { useMagnetometer } from "@/hooks/useMagnetometer";
 import { useMicrophone } from "@/hooks/useMicrophone";
 import { useMotion } from "@/hooks/useMotion";
@@ -9,6 +10,8 @@ import { useGeolocation } from "@/hooks/useGeolocation";
 import { SensorPanel } from "./SensorPanel";
 import { EventLog } from "./EventLog";
 import { SessionHistory } from "./SessionHistory";
+import { SettingsControl } from "./SettingsControl";
+import { FirstRunIntro } from "./FirstRunIntro";
 
 const MAX_EVENTS = 200;
 
@@ -27,6 +30,12 @@ export function Dashboard() {
   const [pastSessions, setPastSessions] = useState<SessionData[]>([]);
   const [transcribeEnabled, setTranscribeEnabled] = useState(false);
   const [nowTs, setNowTs] = useState(0);
+  const [haptics, setHaptics] = useState(true);
+  const [soundCue, setSoundCue] = useState(false);
+  const [introSeen, setIntroSeen] = useState<boolean | null>(null);
+
+  const settingsRef = useRef({ haptics: true, soundCue: false });
+  settingsRef.current = { haptics, soundCue };
 
   const sessionIdRef = useRef<string>("");
   const startedAtRef = useRef<number>(0);
@@ -47,6 +56,34 @@ export function Dashboard() {
       .then((r) => r.json())
       .then((d: { available?: boolean }) => setTranscribeEnabled(d.available === true))
       .catch(() => {});
+  }, []);
+
+  // Load persisted feedback prefs + first-run flag
+  useEffect(() => {
+    try {
+      const h = localStorage.getItem("revenant.haptics");
+      const s = localStorage.getItem("revenant.sound");
+      if (h !== null) setHaptics(h === "1");
+      if (s !== null) setSoundCue(s === "1");
+      setIntroSeen(localStorage.getItem("revenant.introSeen") === "1");
+    } catch {
+      setIntroSeen(true);
+    }
+  }, []);
+
+  const toggleSetting = useCallback((key: "haptics" | "sound", value: boolean) => {
+    if (key === "haptics") {
+      setHaptics(value);
+      try { localStorage.setItem("revenant.haptics", value ? "1" : "0"); } catch {}
+    } else {
+      setSoundCue(value);
+      try { localStorage.setItem("revenant.sound", value ? "1" : "0"); } catch {}
+    }
+  }, []);
+
+  const dismissIntro = useCallback(() => {
+    setIntroSeen(true);
+    try { localStorage.setItem("revenant.introSeen", "1"); } catch {}
   }, []);
 
   const acquireWakeLock = useCallback(async () => {
@@ -89,6 +126,11 @@ export function Dashboard() {
   coordsRef.current = coords;
 
   const addEvent = useCallback((ev: AnomalyEvent, blob?: Blob) => {
+    // Signature anomaly beat: fire hardware feedback in step with the card
+    // reaction (driven by pulseId) and the row slide-in.
+    if (settingsRef.current.haptics) hapticTap();
+    if (settingsRef.current.soundCue) soundTick();
+
     const newClips = new Map<string, Blob>();
     if (blob) {
       newClips.set(ev.id, blob);
@@ -192,10 +234,19 @@ export function Dashboard() {
     motion.recalibrate();
   };
 
+  // Latest event id per channel — changes drive each card's one-shot reaction.
+  const latestByChannel = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const e of events) m[e.channel] = e.id;
+    return m;
+  }, [events]);
+
   return (
     <div className="min-h-screen bg-scope text-zinc-100 flex flex-col">
       <div className="graticule graticule-anim fixed inset-0 pointer-events-none z-0" />
       <div className="vignette fixed inset-0 pointer-events-none z-0" />
+
+      {introSeen === false && <FirstRunIntro onDismiss={dismissIntro} />}
 
       <div className="relative z-10 max-w-6xl w-full mx-auto px-4 py-4 flex flex-col flex-1 gap-4">
         {/* Header */}
@@ -254,6 +305,7 @@ export function Dashboard() {
             >
               {running ? "Stop" : "Start Session"}
             </button>
+            <SettingsControl haptics={haptics} sound={soundCue} onToggle={toggleSetting} />
           </div>
         </header>
 
@@ -266,6 +318,7 @@ export function Dashboard() {
             onEnable={emf.enable}
             color="#22d3ee"
             running={running}
+            pulseId={latestByChannel.emf}
             noChannelMessage="Not exposed by this browser. Use Chrome/Edge on Android over HTTPS, or pair an external Bluetooth magnetometer on iPhone."
           />
           <SensorPanel
@@ -275,6 +328,7 @@ export function Dashboard() {
             onEnable={sound.enable}
             color="#34d399"
             running={running}
+            pulseId={latestByChannel.sound}
           />
           <SensorPanel
             title="Motion"
@@ -283,6 +337,7 @@ export function Dashboard() {
             onEnable={motion.enable}
             color="#fbbf24"
             running={running}
+            pulseId={latestByChannel.motion}
           />
         </div>
 

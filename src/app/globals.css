@@ -58,7 +58,7 @@
 
 /* Edge vignette — darkens the corners to pull focus toward the readouts. */
 .vignette {
-  background: radial-gradient(125% 95% at 50% 32%, transparent 55%, rgba(0, 0, 0, 0.5) 100%);
+  background: radial-gradient(125% 95% at 50% 32%, transparent 58%, rgba(0, 0, 0, 0.42) 100%);
 }
 
 /* Tactile button press — unified curve/timing. */
@@ -126,6 +126,40 @@
 }
 .event-flash {
   animation: event-flash var(--t-flash) var(--ease) 1;
+}
+
+/* Signature anomaly beat — the channel card lifts a hair while a channel-tinted
+   ring blooms and fades, the new row slides in, all on the same curve/timing. */
+@keyframes card-react {
+  0%   { transform: scale(1); }
+  35%  { transform: scale(1.012); }
+  100% { transform: scale(1); }
+}
+.card-react {
+  animation: card-react var(--t-flash) var(--ease) 1;
+}
+@keyframes react-ring {
+  0%   { opacity: 0.85; }
+  100% { opacity: 0; }
+}
+.card-react-ring {
+  animation: react-ring var(--t-flash) var(--ease) 1;
+}
+@keyframes event-enter {
+  0%   { opacity: 0; transform: translateY(-5px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.event-enter {
+  animation: event-enter var(--t-3) var(--ease) 1;
+}
+
+/* First-run panel entrance. */
+@keyframes intro-enter {
+  0%   { opacity: 0; transform: translateY(8px) scale(0.98); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+.intro-enter {
+  animation: intro-enter var(--t-3) var(--ease) 1;
 }
 
 /* Scrollbar */
