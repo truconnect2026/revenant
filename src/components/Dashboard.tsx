@@ -201,6 +201,9 @@ export function Dashboard() {
       else if (ch === "motion") motion.enable();
       else if (ch === "emf" && emf.status !== "no-channel") emf.enable();
     }
+    // Turning Motion OFF auto-disarms Sentry — an "armed" watch on a dormant,
+    // non-sampling channel is misleading. Re-arming Motion must be deliberate.
+    if (ch === "motion" && !turningOn) setSentryArmed(false);
     // Turning OFF: active flips false → that hook tears itself down; others untouched.
   }, [channelOn, running, sound, motion, emf]);
 
