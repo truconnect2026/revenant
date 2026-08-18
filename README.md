@@ -62,3 +62,14 @@ Schema is created automatically on first request.
 ## Design philosophy
 
 This is a **real instrument**, not a spooky toy. Gimmicky apps fake readings with random numbers — this one refuses to. If a sensor isn't available, the panel says so plainly instead of inventing a number.
+
+## Credits
+
+Built by [David Andrew Jones](https://github.com/truconnect2026) — initial build, sensor
+pipeline (magnetometer, microphone, motion hooks), the rolling-baseline anomaly detection in
+`lib/anomaly.ts`, spectrogram rendering, and session persistence.
+
+[Curt Stephens](https://github.com/animeaddict124) — Motion Sentry mode, per-channel
+include/exclude controls, event-log UX, and the visual and interaction passes.
+
+Portions of this codebase were written with AI assistance, as recorded in the commit trailers.
