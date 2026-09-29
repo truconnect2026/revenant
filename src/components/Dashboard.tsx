@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { AnomalyEvent, SessionData, SentryLevel } from "@/lib/types";
 import { idbSaveSession, idbLoadSessions } from "@/lib/idb";
 import { hapticTap, soundTick } from "@/lib/feedback";
@@ -326,6 +327,16 @@ export function Dashboard() {
                 onChange={(e) => setSessionLabel(e.target.value)}
                 className="hidden sm:block bg-zinc-900 border border-zinc-700 rounded px-3 py-1.5 text-xs font-mono text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 w-40"
               />
+            )}
+            {/* Hidden mid-session: leaving the page would stop the sensors. */}
+            {!running && (
+              <Link
+                href="/review"
+                className="btn-press px-3 py-1.5 text-[10px] font-display uppercase tracking-wider font-semibold rounded border border-zinc-600 text-zinc-400 hover:text-zinc-200 hover:border-zinc-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500"
+                title="Play, transcribe, and delete recorded clips"
+              >
+                EVP
+              </Link>
             )}
             {running && (
               <button

@@ -151,3 +151,107 @@ export async function idbDeleteSession(sessionId: string): Promise<void> {
     t.onerror = () => rej(t.error);
   });
 }
+
+// ── EVP review: flat list of recorded clips ────────────────────────────────
+
+export interface ClipRecord {
+  sessionId: string;
+  sessionLabel: string | null;
+  sessionStartedAt: number;
+  event: StoredEvent;
+  blob: Blob;
+  transcript?: StoredTranscript;
+}
+
+// A speech-to-text result, stored next to its clip so it survives reloads.
+export interface StoredTranscript {
+  text: string;
+  method: string;
+  created_at: number;
+}
+
+interface StoredClipWithTranscript extends StoredClip {
+  transcript?: StoredTranscript;
+}
+
+// All clips that still have audio in storage, newest first.
+export async function idbListClips(): Promise<ClipRecord[]> {
+  const db = await openDB().catch(() => null);
+  if (!db) return [];
+
+  const [sessions, clips] = await Promise.all([
+    new Promise<StoredSession[]>((res, rej) => {
+      const req = db.transaction("sessions", "readonly").objectStore("sessions").getAll();
+      req.onsuccess = () => res(req.result as StoredSession[]);
+      req.onerror = () => rej(req.error);
+    }),
+    new Promise<StoredClipWithTranscript[]>((res, rej) => {
+      const req = db.transaction("clips", "readonly").objectStore("clips").getAll();
+      req.onsuccess = () => res(req.result as StoredClipWithTranscript[]);
+      req.onerror = () => rej(req.error);
+    }),
+  ]);
+
+  const byId = new Map(clips.map((c) => [c.id, c]));
+  const out: ClipRecord[] = [];
+  for (const s of sessions) {
+    for (const ev of s.events) {
+      if (!ev.clipId) continue;
+      const clip = byId.get(ev.clipId);
+      if (!clip) continue;
+      out.push({
+        sessionId: s.id,
+        sessionLabel: s.label,
+        sessionStartedAt: s.started_at,
+        event: ev,
+        blob: clip.blob,
+        transcript: clip.transcript,
+      });
+    }
+  }
+  out.sort((a, b) => b.event.timestamp - a.event.timestamp);
+  return out;
+}
+
+// Delete a clip's audio. The anomaly event stays in its session (it is a real
+// sensor reading); only its clipId reference is removed.
+export async function idbDeleteClip(sessionId: string, clipId: string): Promise<void> {
+  const db = await openDB().catch(() => null);
+  if (!db) return;
+  await new Promise<void>((res, rej) => {
+    const t = db.transaction(["sessions", "clips"], "readwrite");
+    const sessions = t.objectStore("sessions");
+    const get = sessions.get(sessionId);
+    get.onsuccess = () => {
+      const s = get.result as StoredSession | undefined;
+      if (s) {
+        s.events = s.events.map((ev) => {
+          if (ev.clipId !== clipId) return ev;
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          const { clipId: _c, ...rest } = ev;
+          return rest;
+        });
+        sessions.put(s);
+      }
+      t.objectStore("clips").delete(clipId);
+    };
+    t.oncomplete = () => res();
+    t.onerror = () => rej(t.error);
+  });
+}
+
+export async function idbSaveTranscript(clipId: string, transcript: StoredTranscript): Promise<void> {
+  const db = await openDB().catch(() => null);
+  if (!db) return;
+  await new Promise<void>((res, rej) => {
+    const t = db.transaction("clips", "readwrite");
+    const store = t.objectStore("clips");
+    const get = store.get(clipId);
+    get.onsuccess = () => {
+      const clip = get.result as StoredClipWithTranscript | undefined;
+      if (clip) store.put({ ...clip, transcript });
+    };
+    t.oncomplete = () => res();
+    t.onerror = () => rej(t.error);
+  });
+}
