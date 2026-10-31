@@ -24,7 +24,7 @@ export default async function ResearchIndex() {
         </p>
         {spec && (
           <p className="text-[12px] font-mono text-zinc-500">
-            Current dataset: {spec.dataset.sessions} sessions{spec.dataset.contributors ? ` from ${spec.dataset.contributors} contributors` : ""} ·{" "}
+            Current dataset: {spec.dataset.sessions} sessions{spec.dataset.contributors ? ` from ${spec.dataset.contributors} contributor${spec.dataset.contributors === 1 ? "" : "s"}` : ""} ·{" "}
             <Link href="/research/spec" className="underline">full spec sheet</Link>
           </p>
         )}

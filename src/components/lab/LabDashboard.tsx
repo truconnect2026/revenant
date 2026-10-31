@@ -108,7 +108,7 @@ export function LabDashboard({ unprotected }: { unprotected: boolean }) {
         </div>
         {communityView && (
           <p className="text-[10px] font-mono text-zinc-500">
-            {community.status ?? `Anonymised community dataset${community.contributors ? ` · ${community.contributors} contributors` : ""}. Read-only: labels belong to contributors.`}
+            {community.status ?? `Anonymised community dataset${community.contributors ? ` · ${community.contributors} contributor${community.contributors === 1 ? "" : "s"}` : ""}. Read-only: labels belong to contributors.`}
             {!community.status && (
               <button onClick={community.load} className="ml-2 underline">reload</button>
             )}
