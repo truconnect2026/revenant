@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Channel, EventLabel } from "@/lib/types";
 import { CHANNELS } from "@/lib/types";
 import { idbPut, idbPutStoredSessions, idbDelete, type StoredSession } from "@/lib/idb";
@@ -13,7 +13,8 @@ import { recommendThreshold } from "@/lib/lab/sweep";
 import { STIMULUS_TYPES } from "@/lib/lab/sources";
 import { DEFAULT_THRESHOLDS, loadThresholds, saveThresholds, type ThresholdChange } from "@/lib/lab/thresholds";
 import { wilson } from "@/lib/lab/stats";
-import { exportDataset, importDataset } from "@/lib/lab/dataset";
+import { exportDataset, importFiles } from "@/lib/lab/dataset";
+import { syncStatus, syncWithServer } from "@/lib/lab/sync";
 import {
   CHANNEL_HEX, HeatLegend, HeatMatrix, LearningCurve, Legend, NeedMore, NullHistogram, OTHER, RateIntervals,
   SERIES, Scatter, SweepCharts, fmt, pct, type MatrixCell,
@@ -82,7 +83,7 @@ export function OverviewPanel({ data }: { data: LabData }) {
   return (
     <Panel
       title="Dataset"
-      sub="Everything recorded on this device. Hours count only time a channel was actually scoring, so a gap is never counted as quiet."
+      sub="Everything in this lab (this phone, plus anything synced or imported). Hours count only time a channel was actually scoring, so a gap is never counted as quiet."
     >
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         <Stat label="Investigations" value={o.sessionsByType.investigation ?? 0} sub={hrs(hoursFor("investigation"))} />
@@ -744,7 +745,14 @@ export function GearPanel({ data, reload }: { data: LabData; reload: () => void 
 export function DataPanel({ reload }: { reload: () => void }) {
   const [audio, setAudio] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [server, setServer] = useState<{ configured: boolean; missing: string[] } | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    syncStatus().then(setServer).catch(() => setServer(null));
+  }, []);
 
   const doExport = async () => {
     setMsg("Exporting…");
@@ -757,27 +765,88 @@ export function DataPanel({ reload }: { reload: () => void }) {
     URL.revokeObjectURL(url);
     setMsg(`Exported ${(blob.size / 1024 / 1024).toFixed(1)} MB.`);
   };
-  const doImport = async (f: File) => {
+  const doImport = async (files: File[]) => {
     try {
-      const s = await importDataset(await f.text());
-      setMsg(`Imported: ${s.sessionsAdded} new sessions, ${s.sessionsMerged} merged, ${s.clips} clips, ${s.gearTrials} gear trials.`);
+      setMsg("Importing…");
+      const s = await importFiles(files);
+      const parts = [
+        s.datasets && `${s.datasets} dataset file${s.datasets > 1 ? "s" : ""}`,
+        s.legacySessions && `${s.legacySessions} session file${s.legacySessions > 1 ? "s" : ""}`,
+        s.clipsMatched && `${s.clipsMatched} audio clip${s.clipsMatched > 1 ? "s" : ""}`,
+      ].filter(Boolean);
+      const warn = [
+        s.clipsUnmatched ? `${s.clipsUnmatched} audio file(s) didn't match a session — import the session's JSON in the same pick` : "",
+        s.skipped.length ? `skipped ${s.skipped.join(", ")}` : "",
+      ].filter(Boolean);
+      setMsg(`Imported ${parts.join(", ") || "nothing"}.${warn.length ? ` ${warn.join("; ")}.` : ""}`);
       reload();
     } catch (e) {
       setMsg(`Import failed: ${String(e instanceof Error ? e.message : e)}`);
     }
   };
+  const doSync = async () => {
+    setSyncing(true);
+    setSyncMsg(null);
+    try {
+      const r = await syncWithServer(setSyncMsg);
+      setSyncMsg(
+        `Synced. Sent ${r.sessionsPushed} sessions, ${r.chunksPushed} score logs, ${r.clipsPushed} clips. ` +
+          `Received ${r.sessionsPulled} sessions, ${r.chunksPulled} score logs.`
+      );
+      reload();
+    } catch (e) {
+      setSyncMsg(`Sync stopped: ${String(e instanceof Error ? e.message : e)}`);
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   return (
-    <Panel title="Data" sub="Move the dataset between phones. Import merges by id and keeps the newest human label, so nothing is duplicated or overwritten with older data.">
-      <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono text-zinc-400">
-        <button onClick={doExport} className="btn-press px-3 py-1.5 rounded border border-zinc-500 text-zinc-100 text-[10px] font-display uppercase tracking-wider">Export dataset</button>
-        <label className="flex items-center gap-1.5">
-          <input type="checkbox" checked={audio} onChange={(e) => setAudio(e.target.checked)} /> include audio clips
-        </label>
-        <button onClick={() => fileRef.current?.click()} className="btn-press px-3 py-1.5 rounded border border-zinc-700 text-zinc-300 text-[10px] font-display uppercase tracking-wider">Import dataset</button>
-        <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) doImport(f); e.target.value = ""; }} />
-      </div>
-      {msg && <p className="text-[11px] font-mono text-zinc-300">{msg}</p>}
-    </Panel>
+    <>
+      <Panel
+        title="Server sync"
+        sub="Combine the data from every phone on your server, so the lab can analyse all of it. Merging is by id and never replaces a newer label with an older one. Audio from other phones streams on demand."
+      >
+        {server === null ? (
+          <p className="text-[11px] font-mono text-zinc-500">Couldn&apos;t reach the server.</p>
+        ) : !server.configured ? (
+          <NeedMore title="Not set up on this deployment">
+            Add these to the Vercel project, then redeploy: {server.missing.join("; ")}.
+          </NeedMore>
+        ) : (
+          <div className="flex flex-col gap-2">
+            <button
+              onClick={doSync}
+              disabled={syncing}
+              className="btn-press self-start px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-display font-semibold uppercase tracking-wider disabled:opacity-50"
+            >
+              {syncing ? "Syncing…" : "Sync now"}
+            </button>
+            {syncMsg && <p className="text-[11px] font-mono text-zinc-300">{syncMsg}</p>}
+          </div>
+        )}
+      </Panel>
+      <Panel
+        title="Files"
+        sub="Export a full dataset file, or import one. Import also takes the per-session JSON and audio files from the original app's Past Sessions export — pick them together."
+      >
+        <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono text-zinc-400">
+          <button onClick={doExport} className="btn-press px-3 py-1.5 rounded border border-zinc-500 text-zinc-100 text-[10px] font-display uppercase tracking-wider">Export dataset</button>
+          <label className="flex items-center gap-1.5">
+            <input type="checkbox" checked={audio} onChange={(e) => setAudio(e.target.checked)} /> include audio clips
+          </label>
+          <button onClick={() => fileRef.current?.click()} className="btn-press px-3 py-1.5 rounded border border-zinc-700 text-zinc-300 text-[10px] font-display uppercase tracking-wider">Import files</button>
+          <input
+            ref={fileRef}
+            type="file"
+            multiple
+            accept="application/json,.json,audio/wav,audio/webm,.wav,.webm"
+            className="hidden"
+            onChange={(e) => { const fs = Array.from(e.target.files ?? []); if (fs.length) doImport(fs); e.target.value = ""; }}
+          />
+        </div>
+        {msg && <p className="text-[11px] font-mono text-zinc-300">{msg}</p>}
+      </Panel>
+    </>
   );
 }

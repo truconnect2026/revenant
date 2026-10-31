@@ -8,12 +8,13 @@ import {
   idbSaveScoreChunks, type StoredSession,
 } from "../idb";
 import type { ScoreChunk } from "./scoreLog";
+import {
+  base64ToBytes, bytesToBase64, decodeFloat32, encodeFloat32, mergeSessions, type EncodedChunk,
+} from "./merge";
+
+export { decodeFloat32, encodeFloat32, mergeSessions };
 
 export const DATASET_FORMAT = "revenant-dataset";
-
-interface EncodedChunk extends Omit<ScoreChunk, "data"> {
-  data: string; // base64 Float32 little-endian
-}
 
 interface Dataset {
   format: typeof DATASET_FORMAT;
@@ -25,29 +26,6 @@ interface Dataset {
   modelVersions: { id: string }[];
   labMeta: { id: string }[];
   clips?: { id: string; type: string; data: string }[];
-}
-
-function bytesToBase64(bytes: Uint8Array): string {
-  let s = "";
-  const step = 0x8000;
-  for (let i = 0; i < bytes.length; i += step) s += String.fromCharCode(...Array.from(bytes.subarray(i, i + step)));
-  return btoa(s);
-}
-
-function base64ToBytes(b64: string): Uint8Array<ArrayBuffer> {
-  const s = atob(b64);
-  const out = new Uint8Array(s.length);
-  for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
-  return out;
-}
-
-export function encodeFloat32(a: Float32Array): string {
-  return bytesToBase64(new Uint8Array(a.buffer.slice(a.byteOffset, a.byteOffset + a.byteLength)));
-}
-
-export function decodeFloat32(b64: string): Float32Array {
-  const bytes = base64ToBytes(b64);
-  return new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4);
 }
 
 export async function exportDataset(includeAudio: boolean): Promise<Blob> {
@@ -77,28 +55,6 @@ export async function exportDataset(includeAudio: boolean): Promise<Blob> {
     }
   }
   return new Blob([JSON.stringify(ds)], { type: "application/json" });
-}
-
-type StoredEventT = StoredSession["events"][number];
-
-function newerLabel(a: StoredEventT, b: StoredEventT): StoredEventT {
-  const ta = a.label?.labeledAt ?? 0;
-  const tb = b.label?.labeledAt ?? 0;
-  return tb > ta ? { ...a, label: b.label } : a;
-}
-
-/** Merge two copies of a session: union of events/marks by id, newest label wins. */
-export function mergeSessions(a: StoredSession, b: StoredSession): StoredSession {
-  const events = new Map(a.events.map((e) => [e.id, e]));
-  for (const e of b.events) events.set(e.id, events.has(e.id) ? newerLabel(events.get(e.id)!, e) : e);
-  const byId = <T extends { id: string }>(x: T[] = [], y: T[] = []) => Array.from(new Map([...x, ...y].map((m) => [m.id, m])).values());
-  return {
-    ...a,
-    ended_at: a.ended_at ?? b.ended_at,
-    events: Array.from(events.values()).sort((p, q) => p.timestamp - q.timestamp),
-    stimuli: byId(a.stimuli, b.stimuli),
-    subjective: byId(a.subjective, b.subjective),
-  };
 }
 
 export interface ImportSummary {
@@ -137,4 +93,101 @@ export async function importDataset(text: string): Promise<ImportSummary> {
   // Model versions are re-derivable; import them so learning-curve history carries over.
   await idbPutMany("modelVersions", ds.modelVersions ?? []);
   return { sessionsAdded: added, sessionsMerged: merged, scoreChunks: chunks.length, clips: ds.clips?.length ?? 0, gearTrials: ds.gearTrials?.length ?? 0 };
+}
+
+// ── Files from the original app ─────────────────────────────────────────────
+// Before the lab existed, each past session exported as one JSON file plus one
+// audio file per clip, named revenant-<first 8 of session id>-<event ISO time>.
+// These helpers bring those files in, so data recorded on another site address
+// (IndexedDB is per-address) can follow you to a new one.
+
+interface LegacySessionFile {
+  id: string;
+  started_at: number;
+  ended_at: number | null;
+  label: string | null;
+  location: StoredSession["location"];
+  events: StoredSession["events"];
+  type?: StoredSession["type"];
+  stimuli?: StoredSession["stimuli"];
+  subjective?: StoredSession["subjective"];
+}
+
+export function isLegacySession(x: unknown): x is LegacySessionFile {
+  const s = x as LegacySessionFile;
+  return !!s && typeof s.id === "string" && typeof s.started_at === "number" && Array.isArray(s.events);
+}
+
+/** Match an exported clip file name to the event it belongs to. */
+export function matchClipFile(name: string, sessions: StoredSession[]): { sessionId: string; eventId: string } | null {
+  const m = /^revenant-([0-9a-f]{8})-(.+)\.(wav|webm)$/i.exec(name.replace(/ \(\d+\)(?=\.)/, ""));
+  if (!m) return null;
+  const [, prefix, stamp] = m;
+  for (const s of sessions) {
+    if (!s.id.startsWith(prefix)) continue;
+    const ev = s.events.find((e) => new Date(e.timestamp).toISOString().replace(/[:.]/g, "-") === stamp);
+    if (ev) return { sessionId: s.id, eventId: ev.id };
+  }
+  return null;
+}
+
+export interface FilesSummary {
+  datasets: number;
+  legacySessions: number;
+  clipsMatched: number;
+  clipsUnmatched: number;
+  skipped: string[];
+}
+
+/** Import any mix of dataset files, old per-session JSON files and their audio files. */
+export async function importFiles(files: File[]): Promise<FilesSummary> {
+  const summary: FilesSummary = { datasets: 0, legacySessions: 0, clipsMatched: 0, clipsUnmatched: 0, skipped: [] };
+  const audio: File[] = [];
+  for (const f of files) {
+    if (/\.(wav|webm)$/i.test(f.name) || f.type.startsWith("audio/")) {
+      audio.push(f);
+      continue;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await f.text());
+    } catch {
+      summary.skipped.push(f.name);
+      continue;
+    }
+    if ((parsed as { format?: string }).format === DATASET_FORMAT) {
+      await importDataset(JSON.stringify(parsed));
+      summary.datasets++;
+    } else if (isLegacySession(parsed)) {
+      const existing = (await idbLoadStoredSessions()).find((s) => s.id === parsed.id);
+      const incoming: StoredSession = {
+        ...parsed,
+        type: parsed.type ?? "investigation",
+        stimuli: parsed.stimuli ?? [],
+        subjective: parsed.subjective ?? [],
+        schema: 1,
+      };
+      await idbPutStoredSessions([existing ? mergeSessions(existing, incoming) : incoming]);
+      summary.legacySessions++;
+    } else {
+      summary.skipped.push(f.name);
+    }
+  }
+  if (audio.length) {
+    const sessions = await idbLoadStoredSessions();
+    const touched = new Map<string, StoredSession>();
+    for (const f of audio) {
+      const hit = matchClipFile(f.name, sessions);
+      if (!hit) {
+        summary.clipsUnmatched++;
+        continue;
+      }
+      await idbPutClips([{ id: hit.eventId, blob: new Blob([await f.arrayBuffer()], { type: "audio/wav" }) }]);
+      const s = touched.get(hit.sessionId) ?? sessions.find((x) => x.id === hit.sessionId)!;
+      touched.set(hit.sessionId, { ...s, events: s.events.map((e) => (e.id === hit.eventId ? { ...e, clipId: hit.eventId } : e)) });
+      summary.clipsMatched++;
+    }
+    await idbPutStoredSessions(Array.from(touched.values()));
+  }
+  return summary;
 }

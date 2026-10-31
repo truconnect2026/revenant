@@ -19,14 +19,11 @@ const memoryDB: DB = {
   },
 };
 
-// --- Postgres (when POSTGRES_URL is set) ---
-async function getPostgresDB(): Promise<DB> {
-  // Lazy dynamic import so the in-memory path never needs the dependency.
-  // Uses indirect eval to prevent bundlers from statically analyzing the import.
-  const mod = await (new Function('return import("@vercel/postgres")')() as Promise<{
-    sql: (strings: TemplateStringsArray, ...values: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>;
-  }>);
-  const { sql } = mod;
+// --- Postgres (when DATABASE_URL or POSTGRES_URL is set) ---
+// Vercel Postgres moved to Neon; the Neon driver works with either variable.
+async function getPostgresDB(url: string): Promise<DB> {
+  const { neon } = await import("@neondatabase/serverless");
+  const sql = neon(url);
 
   await sql`
     CREATE TABLE IF NOT EXISTS sessions (
@@ -59,8 +56,7 @@ async function getPostgresDB(): Promise<DB> {
       `;
     },
     async list() {
-      const { rows } =
-        await sql`SELECT * FROM sessions ORDER BY started_at DESC`;
+      const rows = await sql`SELECT * FROM sessions ORDER BY started_at DESC`;
       return rows as unknown as SessionData[];
     },
   };
@@ -70,8 +66,9 @@ let cachedDB: DB | null = null;
 
 export async function getDB(): Promise<DB> {
   if (cachedDB) return cachedDB;
-  if (process.env.POSTGRES_URL) {
-    cachedDB = await getPostgresDB();
+  const url = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+  if (url) {
+    cachedDB = await getPostgresDB(url);
   } else {
     cachedDB = memoryDB;
   }

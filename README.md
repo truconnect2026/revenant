@@ -28,6 +28,10 @@ Open **`/lab`** to see the analysis built from this device's data: dataset overv
 
 Set `LAB_PASSCODE` in the Vercel project to lock `/lab` behind a passcode. Data lives in the browser's IndexedDB; use *Export dataset* / *Import dataset* on the Lab overview to merge data from several phones.
 
+**Server sync (optional):** add a Neon Postgres database and a Vercel Blob store to the project (they set `DATABASE_URL` and `BLOB_READ_WRITE_TOKEN`), then use *Sync now* on the Lab overview on each phone. Sessions, score logs, gear trials and model history merge on the server by id; audio clips are stored privately and stream through the passcode-gated API. For local testing without either, start the server with `LAB_SYNC_MEMORY=1` (data lives in server memory; ignored on Vercel).
+
+Moving the app to another repo or address? See [docs/MIGRATION.md](docs/MIGRATION.md) — browser data is tied to the site address, so export first.
+
 Run the analysis unit tests with `npm test`.
 
 ## Platform support
@@ -59,10 +63,10 @@ Or connect the repo to Vercel for automatic deployments. The app works with zero
 
 ## Optional: Postgres persistence
 
-To persist sessions across deploys, add a Vercel Postgres database:
+To persist sessions across deploys, add a Neon Postgres database from the Vercel Marketplace:
 
-1. In the Vercel dashboard, add a Postgres store to your project
-2. The `POSTGRES_URL` env var is set automatically
+1. In the Vercel dashboard, add Neon Postgres to your project
+2. The `DATABASE_URL` (or `POSTGRES_URL`) env var is set automatically
 3. The app detects it and switches from in-memory to Postgres — no code changes needed
 
 Schema is created automatically on first request.

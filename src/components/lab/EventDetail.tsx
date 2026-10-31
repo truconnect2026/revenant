@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { idbGetClip, type StoredSession } from "@/lib/idb";
+import { fetchServerClip } from "@/lib/lab/sync";
 import type { EventLabel } from "@/lib/types";
 import { SpectrogramCanvas } from "../SpectrogramCanvas";
 import { EventLabeler } from "../EventLabeler";
@@ -24,10 +25,13 @@ export function EventDetail({
   }, [event.id]);
   useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
 
+  const [audioMsg, setAudioMsg] = useState<string | null>(null);
   const loadAudio = async () => {
     if (!event.clipId) return;
-    const blob = await idbGetClip(event.clipId);
+    // This phone first; otherwise the server copy (recorded on another phone).
+    const blob = (await idbGetClip(event.clipId)) ?? (await fetchServerClip(event.clipId));
     if (blob) setUrl(URL.createObjectURL(blob));
+    else setAudioMsg("Audio isn't on this phone or the server.");
   };
 
   const f = event.features;
@@ -73,9 +77,12 @@ export function EventDetail({
       {event.clipId && (url ? (
         <audio src={url} controls className="h-7 w-full" autoPlay />
       ) : (
-        <button onClick={loadAudio} className="btn-press self-start px-2 py-1 rounded border border-zinc-700 text-zinc-300 text-[10px]">
-          Play clip
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={loadAudio} className="btn-press self-start px-2 py-1 rounded border border-zinc-700 text-zinc-300 text-[10px]">
+            Play clip
+          </button>
+          {audioMsg && <span className="text-[10px] text-zinc-500">{audioMsg}</span>}
+        </div>
       ))}
       <EventLabeler event={event} onLabel={onLabel} />
     </div>

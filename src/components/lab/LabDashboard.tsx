@@ -1,8 +1,9 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { Channel } from "@/lib/types";
-import { useLabData } from "./useLabData";
+import { useLabData, type LabData } from "./useLabData";
+import { getDeviceId } from "@/lib/lab/device";
 import {
   CalibrationPanel, ChannelPicker, DataPanel, FeltPanel, GearPanel, LocationPanel, ModelPanel, OverviewPanel,
   ResiduePanel, ThresholdPanel,
@@ -22,9 +23,22 @@ type Tab = (typeof TABS)[number]["id"];
 const CHANNEL_TABS: Tab[] = ["model", "residue", "threshold"];
 
 export function LabDashboard({ unprotected }: { unprotected: boolean }) {
-  const { data, setData, loading, error, reload, labelEvent } = useLabData();
+  const { data: allData, setData, loading, error, reload, labelEvent } = useLabData();
   const [tab, setTab] = useState<Tab>("overview");
   const [channel, setChannel] = useState<Channel>("sound");
+  const [deviceId, setDeviceId] = useState<string | null>(null);
+  const [thisDeviceOnly, setThisDeviceOnly] = useState(false);
+  useEffect(() => setDeviceId(getDeviceId()), []);
+
+  // Sessions without a device id were recorded here before ids existed.
+  const otherDevices = deviceId ? allData.sessions.filter((s) => s.device?.id && s.device.id !== deviceId).length : 0;
+  const data: LabData = useMemo(() => {
+    if (!thisDeviceOnly || !deviceId) return allData;
+    const sessions = allData.sessions.filter((s) => !s.device?.id || s.device.id === deviceId);
+    const keep = new Set(sessions.map((s) => s.id));
+    const series = new Map(Array.from(allData.series.entries()).filter(([k]) => keep.has(k.split(":")[0])));
+    return { ...allData, sessions, series };
+  }, [allData, thisDeviceOnly, deviceId]);
 
   return (
     <div className="min-h-screen bg-scope text-zinc-100">
@@ -68,9 +82,18 @@ export function LabDashboard({ unprotected }: { unprotected: boolean }) {
           </div>
         </nav>
 
-        {CHANNEL_TABS.includes(tab) && (
-          <div className="flex justify-end">
-            <ChannelPicker value={channel} onChange={setChannel} />
+        {(CHANNEL_TABS.includes(tab) || otherDevices > 0) && (
+          <div className="flex items-center justify-between gap-2">
+            {otherDevices > 0 ? (
+              <button
+                onClick={() => setThisDeviceOnly((v) => !v)}
+                className="btn-press px-2.5 py-1 rounded border border-zinc-700 text-[10px] font-mono text-zinc-300"
+                title={`${otherDevices} session(s) came from other phones`}
+              >
+                {thisDeviceOnly ? "This phone only" : "All phones"}
+              </button>
+            ) : <span />}
+            {CHANNEL_TABS.includes(tab) && <ChannelPicker value={channel} onChange={setChannel} />}
           </div>
         )}
 

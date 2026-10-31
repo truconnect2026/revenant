@@ -24,7 +24,8 @@ export async function POST(req: Request) {
     httpOnly: true,
     secure: true,
     sameSite: "lax",
-    path: "/lab",
+    // Root path so the lab sync API (/api/lab/*) receives it too.
+    path: "/",
     maxAge: 60 * 60 * 24 * 30,
   });
   return res;

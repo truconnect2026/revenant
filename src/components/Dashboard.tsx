@@ -9,6 +9,7 @@ import { ScoreRecorder } from "@/lib/lab/scoreLog";
 import { runAroundPeak } from "@/lib/lab/features";
 import { applyStimulusLabels, expectedChannels } from "@/lib/lab/sources";
 import { DEFAULT_THRESHOLDS, loadThresholds } from "@/lib/lab/thresholds";
+import { getDeviceId } from "@/lib/lab/device";
 import type { ScoreListener } from "@/hooks/sensorOptions";
 import { hapticTap, soundTick } from "@/lib/feedback";
 import { useMagnetometer } from "@/hooks/useMagnetometer";
@@ -178,7 +179,7 @@ export function Dashboard() {
     type: sessionTypeRef.current,
     channels: { ...channelOnRef.current },
     thresholds: { ...thresholdsRef.current },
-    device: typeof navigator !== "undefined" ? { userAgent: navigator.userAgent } : undefined,
+    device: typeof navigator !== "undefined" ? { userAgent: navigator.userAgent, id: getDeviceId() } : undefined,
     stimuli: stimuliRef.current,
     subjective: subjectiveRef.current,
     schema: SCHEMA_VERSION,

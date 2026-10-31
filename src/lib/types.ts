@@ -105,6 +105,8 @@ export interface AnomalyEvent {
 export interface DeviceInfo {
   userAgent: string;
   platform?: string;
+  /** Random per-browser id, so merged datasets can be filtered by device. */
+  id?: string;
 }
 
 export interface SessionData {
