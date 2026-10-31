@@ -125,6 +125,10 @@ export interface SessionData {
   subjective?: SubjectiveMark[];
   /** Data-model version the session was recorded under. */
   schema?: number;
+  /** Kind of place, chosen by the investigator. Shared with the community instead of GPS. */
+  place?: { type?: string; region?: string };
+  /** Set only on community copies: who contributed it (a random id, not a person). */
+  contributor?: { id: string };
 }
 
 export const SCHEMA_VERSION = 2;

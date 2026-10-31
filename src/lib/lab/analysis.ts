@@ -187,7 +187,11 @@ export interface EffectRow {
  * purpose. Only sessions with an observation log count, since an hour that
  * wasn't recorded can't be counted as quiet.
  */
-export function locationEffect(sessions: LabSession[], series: SeriesMap): { rows: EffectRow[]; excludedLegacy: number } {
+export function locationEffect(
+  sessions: LabSession[],
+  series: SeriesMap,
+  groupOf: (s: LabSession) => string | undefined = (s) => (s.label ?? "").trim() || s.place?.type
+): { rows: EffectRow[]; excludedLegacy: number } {
   type Agg = { count: number; hours: number };
   const control: Record<Channel, Agg> = { emf: { count: 0, hours: 0 }, sound: { count: 0, hours: 0 }, motion: { count: 0, hours: 0 } };
   const groups = new Map<string, Record<Channel, Agg>>();
@@ -213,7 +217,7 @@ export function locationEffect(sessions: LabSession[], series: SeriesMap): { row
         const all = bump("All investigations")[ch];
         all.count += count;
         all.hours += hours;
-        const loc = (s.label ?? "").trim();
+        const loc = groupOf(s);
         if (loc) {
           const g = bump(loc)[ch];
           g.count += count;

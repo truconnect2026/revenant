@@ -13,11 +13,13 @@ const SESSION_TYPE_NAME: Record<string, string> = { investigation: "Investigatio
 
 /** One stored event with its audio, spectrogram, measured features and labeler. */
 export function EventDetail({
-  session, event, onLabel,
+  session, event, onLabel, readOnly = false,
 }: {
   session: StoredSession;
   event: StoredEvent;
   onLabel: (label: EventLabel) => void;
+  /** Community data: labels belong to contributors, and audio comes from the community store. */
+  readOnly?: boolean;
 }) {
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
@@ -29,7 +31,9 @@ export function EventDetail({
   const loadAudio = async () => {
     if (!event.clipId) return;
     // This phone first; otherwise the server copy (recorded on another phone).
-    const blob = (await idbGetClip(event.clipId)) ?? (await fetchServerClip(event.clipId));
+    const blob = readOnly
+      ? await fetch(`/api/community/clip?id=${encodeURIComponent(event.clipId)}`).then((r) => (r.ok ? r.blob() : null)).catch(() => null)
+      : (await idbGetClip(event.clipId)) ?? (await fetchServerClip(event.clipId));
     if (blob) setUrl(URL.createObjectURL(blob));
     else setAudioMsg("Audio isn't on this phone or the server.");
   };
@@ -61,7 +65,7 @@ export function EventDetail({
         </span>
       </div>
       <div className="text-zinc-500">
-        {SESSION_TYPE_NAME[session.type ?? "investigation"]}{session.label ? ` · ${session.label}` : ""}
+        {SESSION_TYPE_NAME[session.type ?? "investigation"]}{session.label ? ` · ${session.label}` : session.place?.type ? ` · ${session.place.type}` : ""}
       </div>
       {facts.length > 0 && (
         <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[10px]">
@@ -84,7 +88,13 @@ export function EventDetail({
           {audioMsg && <span className="text-[10px] text-zinc-500">{audioMsg}</span>}
         </div>
       ))}
-      <EventLabeler event={event} onLabel={onLabel} />
+      {readOnly ? (
+        <span className="text-[10px] text-zinc-500">
+          {event.label?.status && event.label.status !== "unlabeled" ? `Contributor label: ${event.label.status}${event.label.source ? ` · ${event.label.source}` : ""}` : "Unlabeled by contributor"}
+        </span>
+      ) : (
+        <EventLabeler event={event} onLabel={onLabel} />
+      )}
     </div>
   );
 }

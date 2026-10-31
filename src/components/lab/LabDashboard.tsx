@@ -4,6 +4,8 @@ import Link from "next/link";
 import type { Channel } from "@/lib/types";
 import { useLabData, type LabData } from "./useLabData";
 import { getDeviceId } from "@/lib/lab/device";
+import { useCommunityData } from "./useCommunityData";
+import { ResearchPanel } from "./ResearchPanel";
 import {
   CalibrationPanel, ChannelPicker, DataPanel, FeltPanel, GearPanel, LocationPanel, ModelPanel, OverviewPanel,
   ResiduePanel, ThresholdPanel,
@@ -18,6 +20,7 @@ const TABS = [
   { id: "location", name: "Sites" },
   { id: "felt", name: "Felt" },
   { id: "gear", name: "Gear" },
+  { id: "research", name: "Research" },
 ] as const;
 type Tab = (typeof TABS)[number]["id"];
 const CHANNEL_TABS: Tab[] = ["model", "residue", "threshold"];
@@ -28,17 +31,25 @@ export function LabDashboard({ unprotected }: { unprotected: boolean }) {
   const [channel, setChannel] = useState<Channel>("sound");
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const [thisDeviceOnly, setThisDeviceOnly] = useState(false);
+  const [source, setSource] = useState<"mine" | "community">("mine");
+  const community = useCommunityData();
+  const pickSource = (s: "mine" | "community") => {
+    setSource(s);
+    if (s === "community" && !community.data) community.load();
+  };
   useEffect(() => setDeviceId(getDeviceId()), []);
 
   // Sessions without a device id were recorded here before ids existed.
   const otherDevices = deviceId ? allData.sessions.filter((s) => s.device?.id && s.device.id !== deviceId).length : 0;
-  const data: LabData = useMemo(() => {
+  const localData: LabData = useMemo(() => {
     if (!thisDeviceOnly || !deviceId) return allData;
     const sessions = allData.sessions.filter((s) => !s.device?.id || s.device.id === deviceId);
     const keep = new Set(sessions.map((s) => s.id));
     const series = new Map(Array.from(allData.series.entries()).filter(([k]) => keep.has(k.split(":")[0])));
     return { ...allData, sessions, series };
   }, [allData, thisDeviceOnly, deviceId]);
+  const communityView = source === "community";
+  const data: LabData = communityView ? community.data ?? { ...allData, sessions: [], series: new Map(), versions: [], gear: [], thresholdLog: [] } : localData;
 
   return (
     <div className="min-h-screen bg-scope text-zinc-100">
@@ -82,9 +93,31 @@ export function LabDashboard({ unprotected }: { unprotected: boolean }) {
           </div>
         </nav>
 
-        {(CHANNEL_TABS.includes(tab) || otherDevices > 0) && (
+        <div role="radiogroup" aria-label="Data source" className="flex rounded border border-zinc-700 overflow-hidden self-start">
+          {([["mine", "My data"], ["community", "Community"]] as const).map(([id, name]) => (
+            <button
+              key={id}
+              role="radio"
+              aria-checked={source === id}
+              onClick={() => pickSource(id)}
+              className={`btn-press px-3 py-1 text-[10px] font-display font-semibold uppercase tracking-wider ${source === id ? "bg-zinc-200 text-zinc-900" : "text-zinc-400"}`}
+            >
+              {name}
+            </button>
+          ))}
+        </div>
+        {communityView && (
+          <p className="text-[10px] font-mono text-zinc-500">
+            {community.status ?? `Anonymised community dataset${community.contributors ? ` · ${community.contributors} contributors` : ""}. Read-only: labels belong to contributors.`}
+            {!community.status && (
+              <button onClick={community.load} className="ml-2 underline">reload</button>
+            )}
+          </p>
+        )}
+
+        {(CHANNEL_TABS.includes(tab) || (otherDevices > 0 && !communityView)) && (
           <div className="flex items-center justify-between gap-2">
-            {otherDevices > 0 ? (
+            {otherDevices > 0 && !communityView ? (
               <button
                 onClick={() => setThisDeviceOnly((v) => !v)}
                 className="btn-press px-2.5 py-1 rounded border border-zinc-700 text-[10px] font-mono text-zinc-300"
@@ -106,16 +139,17 @@ export function LabDashboard({ unprotected }: { unprotected: boolean }) {
               <>
                 <OverviewPanel data={data} />
                 <LoopGuide />
-                <DataPanel reload={reload} />
+                {!communityView && <DataPanel reload={reload} />}
               </>
             )}
-            {tab === "model" && <ModelPanel data={data} channel={channel} setData={setData} onLabel={labelEvent} />}
-            {tab === "residue" && <ResiduePanel data={data} channel={channel} onLabel={labelEvent} />}
+            {tab === "model" && <ModelPanel data={data} channel={channel} setData={setData} onLabel={labelEvent} readOnly={communityView} />}
+            {tab === "residue" && <ResiduePanel data={data} channel={channel} onLabel={labelEvent} readOnly={communityView} />}
             {tab === "calibration" && <CalibrationPanel data={data} />}
             {tab === "threshold" && <ThresholdPanel data={data} channel={channel} reload={reload} />}
             {tab === "location" && <LocationPanel data={data} />}
             {tab === "felt" && <FeltPanel data={data} />}
             {tab === "gear" && <GearPanel data={data} reload={reload} />}
+            {tab === "research" && <ResearchPanel data={data} source={source} contributors={community.contributors} onReload={communityView ? community.load : reload} />}
           </>
         )}
 

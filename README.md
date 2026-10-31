@@ -34,6 +34,18 @@ Moving the app to another repo or address? See [docs/MIGRATION.md](docs/MIGRATIO
 
 Run the analysis unit tests with `npm test`.
 
+## Community research
+
+Revenant is set up as an open, community-run research project:
+
+- **Contribute (opt-in):** the *Community research* card on the main page explains what is shared and asks for consent. GPS, location names, exact times and device details are stripped on the phone and again on the server; audio needs a separate opt-in. Contributors can withdraw and delete everything they sent.
+- **Place type:** sessions can be tagged Home, Cemetery, Historic site… — that is the only location context the community dataset gets.
+- **Background training:** a daily Vercel Cron (`vercel.json`, needs `CRON_SECRET`) trains the source models on the community dataset, builds the spec sheet and leaves a *draft* research log. Nothing publishes on its own.
+- **Public pages:** `/research` (research logs, each with a social preview image), `/research/spec` (printable spec sheet — models, detection rates, false alarms, method, limitations) and `/privacy`.
+- **Lab → Research tab:** switch the lab between *My data* and *Community*, run training, edit a log, publish it, or copy it as Markdown, a short social post or a long caption.
+
+Licences: code under AGPL-3.0 (`LICENSE`); see `docs/DATA_LICENSE.md`, `docs/CONTRIBUTOR_TERMS.md` and `docs/OPEN_SOURCE.md` before making the repo public or opening contributions.
+
 ## Platform support
 
 - **Magnetometer**: Chrome/Edge on Android over HTTPS only. iOS Safari does not expose the Generic Sensor API. The panel shows a clear "no channel" message with guidance.

@@ -2,6 +2,7 @@
 import { useState } from "react";
 import type { SessionType } from "@/lib/types";
 import { STIMULUS_TYPES } from "@/lib/lab/sources";
+import { PLACE_TYPES } from "@/lib/community/privacy";
 
 export const SESSION_TYPES: { type: SessionType; name: string; hint: string }[] = [
   { type: "investigation", name: "Investigate", hint: "A normal investigation at a location with claims." },
@@ -29,6 +30,43 @@ export function SessionTypePicker({ value, onChange }: { value: SessionType; onC
         ))}
       </div>
       <p className="text-[10px] font-mono text-zinc-500 leading-snug">{current.hint}</p>
+    </div>
+  );
+}
+
+/** Kind of place — shared with the community instead of GPS. Optional. */
+export function PlaceTypePicker({
+  value, onChange, region, onRegion,
+}: {
+  value: string | undefined;
+  onChange: (t: string | undefined) => void;
+  region: string;
+  onRegion: (r: string) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="text-[10px] font-mono text-zinc-500">Place type (optional)</span>
+      <div className="flex flex-wrap gap-1">
+        {PLACE_TYPES.map((t) => (
+          <button
+            key={t}
+            onClick={() => onChange(value === t ? undefined : t)}
+            aria-pressed={value === t}
+            className={`btn-press px-2 py-1 rounded border text-[10px] font-mono ${
+              value === t ? "border-zinc-300 text-zinc-100 bg-zinc-700/40" : "border-zinc-700 text-zinc-400"
+            }`}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+      <input
+        value={region}
+        onChange={(e) => onRegion(e.target.value.slice(0, 40))}
+        placeholder="State or country (optional — never an address)"
+        aria-label="State or country"
+        className="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-1.5 text-xs font-mono text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+      />
     </div>
   );
 }

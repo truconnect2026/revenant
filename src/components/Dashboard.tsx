@@ -21,7 +21,8 @@ import { EventLog } from "./EventLog";
 import { SessionHistory } from "./SessionHistory";
 import { SettingsControl } from "./SettingsControl";
 import { FirstRunIntro } from "./FirstRunIntro";
-import { FieldControls, SessionTypePicker } from "./FieldControls";
+import { FieldControls, PlaceTypePicker, SessionTypePicker } from "./FieldControls";
+import { CommunityPanel } from "./CommunityPanel";
 
 const MAX_EVENTS = 200; // shown in the live log; the session record keeps every event
 const SCORE_FLUSH_MS = 15000;
@@ -56,6 +57,12 @@ export function Dashboard() {
   const [stimuli, setStimuli] = useState<StimulusMark[]>([]);
   const [subjective, setSubjective] = useState<SubjectiveMark[]>([]);
   const [thresholds, setThresholds] = useState<Record<Channel, number>>(DEFAULT_THRESHOLDS);
+  const [placeType, setPlaceType] = useState<string | undefined>(undefined);
+  const placeTypeRef = useRef<string | undefined>(undefined);
+  placeTypeRef.current = placeType;
+  const [placeRegion, setPlaceRegion] = useState("");
+  const placeRegionRef = useRef("");
+  placeRegionRef.current = placeRegion;
 
   const settingsRef = useRef({ haptics: true, soundCue: false, blind: false });
   settingsRef.current = { haptics, soundCue, blind };
@@ -67,6 +74,9 @@ export function Dashboard() {
   sessionLabelRef.current = sessionLabel;
   const clipBlobsRef = useRef<Map<string, Blob>>(new Map());
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
+  // Set when the session stops, so late writes (an event's duration measured
+  // after Stop) keep the session marked as finished.
+  const endedAtRef = useRef<number | null>(null);
   const sessionTypeRef = useRef<SessionType>("investigation");
   sessionTypeRef.current = sessionType;
   const channelOnRef = useRef(channelOn);
@@ -172,7 +182,7 @@ export function Dashboard() {
   const buildSession = useCallback((endedAt: number | null): SessionData => ({
     id: sessionIdRef.current,
     started_at: startedAtRef.current,
-    ended_at: endedAt,
+    ended_at: endedAt ?? endedAtRef.current,
     label: sessionLabelRef.current || null,
     location: coordsRef.current,
     events: eventsRef.current,
@@ -183,6 +193,9 @@ export function Dashboard() {
     stimuli: stimuliRef.current,
     subjective: subjectiveRef.current,
     schema: SCHEMA_VERSION,
+    place: placeTypeRef.current || placeRegionRef.current.trim()
+      ? { type: placeTypeRef.current, region: placeRegionRef.current.trim() || undefined }
+      : undefined,
   }), []);
 
   // Replace the session's events: keep the full list in the ref (that's what
@@ -335,6 +348,7 @@ export function Dashboard() {
 
     sessionIdRef.current = crypto.randomUUID();
     startedAtRef.current = Date.now();
+    endedAtRef.current = null;
     setEvents([]);
     stimuliRef.current = [];
     subjectiveRef.current = [];
@@ -368,7 +382,8 @@ export function Dashboard() {
     setBlind(false);
     releaseWakeLock();
 
-    const session = buildSession(Date.now());
+    endedAtRef.current = Date.now();
+    const session = buildSession(endedAtRef.current);
 
     // Final IDB save with ended_at timestamp, plus the rest of the score log.
     await idbSaveSession(session, new Map()).catch(() => {});
@@ -467,6 +482,9 @@ export function Dashboard() {
         {!running && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <SessionTypePicker value={sessionType} onChange={changeSessionType} />
+            <div className="sm:col-span-2 order-last">
+              <PlaceTypePicker value={placeType} onChange={setPlaceType} region={placeRegion} onRegion={setPlaceRegion} />
+            </div>
             <input
               type="text"
               placeholder="Location (e.g. Old mill, basement)"
@@ -574,6 +592,7 @@ export function Dashboard() {
         {!running && (
           <SessionHistory sessions={pastSessions} onSessionsChange={setPastSessions} onLabel={labelPastEvent} />
         )}
+        {!running && <CommunityPanel refreshKey={pastSessions.length} />}
 
         {/* Footer */}
         <footer className="text-center text-[10px] font-mono text-zinc-600 leading-relaxed">

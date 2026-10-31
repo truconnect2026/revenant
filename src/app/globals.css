@@ -196,3 +196,12 @@ audio {
 audio::-webkit-media-controls-panel {
   background: rgba(39, 39, 42, 0.8);
 }
+
+/* Print: the spec sheet prints as a clean light document (portfolio / PDF). */
+@media print {
+  .no-print { display: none !important; }
+  body, .bg-scope { background: #fff !important; color: #111 !important; }
+  .panel-card, .spec-box { background: #fff !important; box-shadow: none !important; border: 1px solid #ccc !important; backdrop-filter: none !important; }
+  .text-zinc-50, .text-zinc-100, .text-zinc-200, .text-zinc-300 { color: #111 !important; }
+  .text-zinc-400, .text-zinc-500, .text-zinc-600 { color: #444 !important; }
+}

@@ -112,10 +112,11 @@ export function OverviewPanel({ data }: { data: LabData }) {
 // ── 2. Model: training, confusion matrix, learning curve, feature map ───────
 
 export function ModelPanel({
-  data, channel, setData, onLabel,
+  data, channel, setData, onLabel, readOnly = false,
 }: {
   data: LabData;
   channel: Channel;
+  readOnly?: boolean;
   setData: (fn: (d: LabData) => LabData) => void;
   onLabel: LabelFn;
 }) {
@@ -229,7 +230,7 @@ export function ModelPanel({
             leave-one-session-out, and it says &ldquo;unknown&rdquo; instead of guessing when an event isn&apos;t close to anything it has seen.
           </>
         }
-        right={
+        right={readOnly ? undefined :
           <button
             onClick={train}
             disabled={busy}
@@ -239,6 +240,11 @@ export function ModelPanel({
           </button>
         }
       >
+        {readOnly && (
+          <p className="text-[11px] font-mono text-zinc-400">
+            Community models train on the server (daily, or from the Research tab). Showing the latest server run.
+          </p>
+        )}
         {note && <p className="text-[11px] font-mono text-zinc-300">{note}</p>}
         {!latest ? (
           <NeedMore title="No model yet">
@@ -317,7 +323,7 @@ export function ModelPanel({
             <Legend items={map.legend} />
             <Scatter points={map.points} selected={sel} onSelect={setSel} />
             {selected && (
-              <EventDetail session={selected.s} event={selected.e} onLabel={(l) => onLabel(selected.s.id, selected.e.id, l)} />
+              <EventDetail session={selected.s} event={selected.e} readOnly={readOnly} onLabel={(l) => onLabel(selected.s.id, selected.e.id, l)} />
             )}
           </>
         )}
@@ -564,7 +570,7 @@ export function FeltPanel({ data }: { data: LabData }) {
 
 // ── 7. Residue queue ────────────────────────────────────────────────────────
 
-export function ResiduePanel({ data, channel, onLabel }: { data: LabData; channel: Channel; onLabel: LabelFn }) {
+export function ResiduePanel({ data, channel, onLabel, readOnly = false }: { data: LabData; channel: Channel; onLabel: LabelFn; readOnly?: boolean }) {
   const [limit, setLimit] = useState(10);
   const [view, setView] = useState<"residue" | "review">("residue");
   const q = useMemo(() => residueQueue(data.sessions as LabSession[], channel), [data, channel]);
@@ -613,6 +619,7 @@ export function ResiduePanel({ data, channel, onLabel }: { data: LabData; channe
               key={event.id}
               session={session as StoredSession}
               event={event}
+              readOnly={readOnly}
               onLabel={(l) => onLabel(session.id, event.id, l)}
             />
           ))}

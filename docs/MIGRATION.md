@@ -67,6 +67,7 @@ In **Settings → Environment Variables**:
 |---|---|---|
 | `LAB_PASSCODE` | a passcode you choose | Locks `/lab` and the sync API. Without it the lab is open to anyone with the link. |
 | `OPENAI_API_KEY` | your key (optional) | The *Analyze* (transcribe) button on clips |
+| `CRON_SECRET` | a long random string | Lets the daily background training run (`vercel.json`) call `/api/research/train` |
 
 Never set `LAB_SYNC_MEMORY` on Vercel — it's for local testing only and is ignored there anyway.
 

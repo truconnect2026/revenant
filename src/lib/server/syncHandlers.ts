@@ -7,18 +7,19 @@ import type { DocKind, LabStore } from "./labStore";
 
 export const MAX_BODY_BYTES = 4 * 1024 * 1024; // under Vercel's 4.5 MB function limit
 const ID_RE = /^[A-Za-z0-9:_-]{1,128}$/;
-const DOC_KINDS: DocKind[] = ["gear", "model", "meta"];
+type SyncDocKind = Extract<DocKind, "gear" | "model" | "meta">;
+const DOC_KINDS: SyncDocKind[] = ["gear", "model", "meta"];
 
 export interface PushBody {
   sessions?: StoredSession[];
   chunks?: (EncodedChunk & { fp: number })[];
-  docs?: Partial<Record<DocKind, { id: string }[]>>;
+  docs?: Partial<Record<SyncDocKind, { id: string }[]>>;
 }
 
 export interface Snapshot {
   sessions: StoredSession[];
   chunkIndex: { id: string; fp: number }[];
-  docs: Record<DocKind, { id: string }[]>;
+  docs: Record<SyncDocKind, { id: string }[]>;
   clipIds: string[];
 }
 
