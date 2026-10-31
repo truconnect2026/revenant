@@ -1,7 +1,12 @@
 import type { AnomalyEvent, SessionData } from "./types";
+import type { ScoreChunk } from "./lab/scoreLog";
 
 const DB_NAME = "revenant";
-const DB_VERSION = 1;
+// v2 (learning loop): adds scoreLogs, gearTrials, modelVersions, labMeta. Old
+// sessions need no rewrite — missing fields are filled on read (normalizeSession).
+const DB_VERSION = 2;
+
+export type LabStore = "scoreLogs" | "gearTrials" | "modelVersions" | "labMeta";
 
 let _dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -21,8 +26,23 @@ function openDB(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains("clips")) {
         db.createObjectStore("clips", { keyPath: "id" });
       }
+      if (!db.objectStoreNames.contains("scoreLogs")) {
+        const st = db.createObjectStore("scoreLogs", { keyPath: "id" });
+        st.createIndex("sessionId", "sessionId", { unique: false });
+      }
+      for (const name of ["gearTrials", "modelVersions", "labMeta"]) {
+        if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, { keyPath: "id" });
+      }
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      const db = req.result;
+      // Let a newer tab upgrade the schema instead of being blocked by this one.
+      db.onversionchange = () => {
+        db.close();
+        _dbPromise = null;
+      };
+      resolve(db);
+    };
     req.onerror = () => {
       _dbPromise = null;
       reject(req.error);
@@ -105,7 +125,7 @@ export async function idbLoadSessions(): Promise<SessionData[]> {
         events.push(rest);
       }
     }
-    result.push({ ...s, events });
+    result.push(normalizeSession({ ...s, events }));
   }
 
   return result;
@@ -145,8 +165,125 @@ export async function idbDeleteSession(sessionId: string): Promise<void> {
   const db = await openDB().catch(() => null);
   if (!db) return;
   await new Promise<void>((res, rej) => {
-    const t = db.transaction("sessions", "readwrite");
+    const t = db.transaction(["sessions", "scoreLogs"], "readwrite");
     t.objectStore("sessions").delete(sessionId);
+    const idx = t.objectStore("scoreLogs").index("sessionId");
+    const req = idx.openKeyCursor(IDBKeyRange.only(sessionId));
+    req.onsuccess = () => {
+      const c = req.result;
+      if (c) {
+        t.objectStore("scoreLogs").delete(c.primaryKey);
+        c.continue();
+      }
+    };
+    t.oncomplete = () => res();
+    t.onerror = () => rej(t.error);
+  });
+}
+
+// ── Learning-loop storage ───────────────────────────────────────────────────
+
+/** Fill fields that sessions recorded before schema v2 don't have. */
+export function normalizeSession<T extends Omit<SessionData, "events"> & { events: StoredEvent[] | AnomalyEvent[] }>(s: T): T {
+  return {
+    ...s,
+    type: s.type ?? "investigation",
+    stimuli: s.stimuli ?? [],
+    subjective: s.subjective ?? [],
+    schema: s.schema ?? 1,
+  };
+}
+
+function reqP<T>(r: IDBRequest<T>): Promise<T> {
+  return new Promise((res, rej) => {
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+
+/** All sessions as stored (no audio loaded), newest first, normalized. */
+export async function idbLoadStoredSessions(): Promise<StoredSession[]> {
+  const db = await openDB().catch(() => null);
+  if (!db) return [];
+  const all = await reqP(db.transaction("sessions", "readonly").objectStore("sessions").getAll() as IDBRequest<StoredSession[]>);
+  return all.map(normalizeSession).sort((a, b) => b.started_at - a.started_at);
+}
+
+export async function idbPutStoredSessions(sessions: StoredSession[]): Promise<void> {
+  const db = await openDB().catch(() => null);
+  if (!db || sessions.length === 0) return;
+  await new Promise<void>((res, rej) => {
+    const t = db.transaction("sessions", "readwrite");
+    const st = t.objectStore("sessions");
+    sessions.forEach((s) => st.put(s));
+    t.oncomplete = () => res();
+    t.onerror = () => rej(t.error);
+  });
+}
+
+export async function idbGetClip(clipId: string): Promise<Blob | undefined> {
+  const db = await openDB().catch(() => null);
+  if (!db) return undefined;
+  const c = await reqP(db.transaction("clips", "readonly").objectStore("clips").get(clipId) as IDBRequest<StoredClip | undefined>).catch(() => undefined);
+  return c?.blob;
+}
+
+export async function idbPutClips(clips: { id: string; blob: Blob }[]): Promise<void> {
+  const db = await openDB().catch(() => null);
+  if (!db || clips.length === 0) return;
+  await new Promise<void>((res, rej) => {
+    const t = db.transaction("clips", "readwrite");
+    clips.forEach((c) => t.objectStore("clips").put(c));
+    t.oncomplete = () => res();
+    t.onerror = () => rej(t.error);
+  });
+}
+
+export async function idbSaveScoreChunks(chunks: ScoreChunk[]): Promise<void> {
+  const db = await openDB().catch(() => null);
+  if (!db || chunks.length === 0) return;
+  await new Promise<void>((res, rej) => {
+    const t = db.transaction("scoreLogs", "readwrite");
+    chunks.forEach((c) => t.objectStore("scoreLogs").put(c));
+    t.oncomplete = () => res();
+    t.onerror = () => rej(t.error);
+  });
+}
+
+export async function idbGetAll<T>(store: LabStore | "clips"): Promise<T[]> {
+  const db = await openDB().catch(() => null);
+  if (!db) return [];
+  return reqP(db.transaction(store, "readonly").objectStore(store).getAll() as IDBRequest<T[]>).catch(() => []);
+}
+
+export async function idbPut<T extends { id: string }>(store: LabStore, value: T): Promise<void> {
+  const db = await openDB().catch(() => null);
+  if (!db) return;
+  await new Promise<void>((res, rej) => {
+    const t = db.transaction(store, "readwrite");
+    t.objectStore(store).put(value);
+    t.oncomplete = () => res();
+    t.onerror = () => rej(t.error);
+  });
+}
+
+export async function idbPutMany<T extends { id: string }>(store: LabStore, values: T[]): Promise<void> {
+  const db = await openDB().catch(() => null);
+  if (!db || values.length === 0) return;
+  await new Promise<void>((res, rej) => {
+    const t = db.transaction(store, "readwrite");
+    values.forEach((v) => t.objectStore(store).put(v));
+    t.oncomplete = () => res();
+    t.onerror = () => rej(t.error);
+  });
+}
+
+export async function idbDelete(store: LabStore, id: string): Promise<void> {
+  const db = await openDB().catch(() => null);
+  if (!db) return;
+  await new Promise<void>((res, rej) => {
+    const t = db.transaction(store, "readwrite");
+    t.objectStore(store).delete(id);
     t.oncomplete = () => res();
     t.onerror = () => rej(t.error);
   });

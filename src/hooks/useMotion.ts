@@ -2,11 +2,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RollingBaseline } from "@/lib/anomaly";
 import { AnomalyEvent, SensorReading, SensorStatus, SentryLevel, SentryPhase } from "@/lib/types";
+import { axisFeatures } from "@/lib/lab/features";
+import type { SensorOptions } from "./sensorOptions";
 
 const SAMPLE_HZ = 20;
 const WINDOW_SIZE = 200;
 const WARMUP = 60;
-const THRESHOLD = 4.5;
+export const DEFAULT_MOTION_THRESHOLD = 4.5;
+const AXIS_RING = 20; // ~1 s of per-axis samples for the event's axis features
 const COOLDOWN_MS = 1500;
 const HISTORY_LEN = 80;
 const POST_TRIP_SKIP = 5;
@@ -43,8 +46,15 @@ export function useMotion(
   active: boolean,
   onEvent: (e: AnomalyEvent, blob?: Blob) => void,
   sentryArmed = false,
-  sentryLevel: SentryLevel = "med"
+  sentryLevel: SentryLevel = "med",
+  options: SensorOptions = {}
 ): SensorReading & { enable: () => Promise<void>; recalibrate: () => void; sentryPhase: SentryPhase } {
+  const threshold = options.threshold ?? DEFAULT_MOTION_THRESHOLD;
+  const thresholdRef = useRef(threshold);
+  thresholdRef.current = threshold;
+  const onScoreRef = useRef(options.onScore);
+  onScoreRef.current = options.onScore;
+  const axisRingRef = useRef<Array<[number, number, number]>>([]);
   const [status, setStatus] = useState<SensorStatus>("standby");
   const [value, setValue] = useState<number | null>(null);
   const [secondaryValue, setSecondaryValue] = useState<number | null>(null);
@@ -167,6 +177,10 @@ export function useMotion(
       const rot = latestRotation.current;
       const rotMag = rot ? Math.hypot(rot.alpha, rot.beta, rot.gamma) : 0;
       const now = Date.now();
+      const axes: [number, number, number] = [a.x, a.y, a.z];
+      // Axis features compare against the ring BEFORE this sample joins it.
+      const ring = axisRingRef.current;
+      const featuresNow = (score: number) => axisFeatures(ring, axes, score, rotMag);
 
       let displayScore: number;
       let dispBaseline: RollingBaseline;
@@ -183,6 +197,7 @@ export function useMotion(
         const settled = warmed && now - armedSinceRef.current >= SENTRY_SETTLE_MS;
 
         if (warmed && status !== "live") setStatus("live");
+        onScoreRef.current?.("motion", now, settled ? sScore : null, "sentry");
 
         if (settled && sScore >= threshold && now - lastSentryTripRef.current > SENTRY_COOLDOWN_MS) {
           lastSentryTripRef.current = now;
@@ -197,6 +212,9 @@ export function useMotion(
             mean: rotDom ? round2(sr.mean) : round2(sa.mean),
             stddev: rotDom ? round2(sr.stddev) : round2(sa.stddev),
             timestamp: now,
+            threshold,
+            sentry: true,
+            features: featuresNow(sScore),
           });
         }
 
@@ -224,8 +242,10 @@ export function useMotion(
         const s = baseline.score(accelMag);
 
         if (baseline.isWarmedUp && status !== "live") setStatus("live");
+        onScoreRef.current?.("motion", now, baseline.isWarmedUp ? s : null, "normal");
+        const th = thresholdRef.current;
 
-        if (baseline.isWarmedUp && s >= THRESHOLD && now - lastTripRef.current > COOLDOWN_MS) {
+        if (baseline.isWarmedUp && s >= th && now - lastTripRef.current > COOLDOWN_MS) {
           lastTripRef.current = now;
           skipCountRef.current = POST_TRIP_SKIP;
           onEventRef.current({
@@ -237,6 +257,8 @@ export function useMotion(
             mean: round2(baseline.mean),
             stddev: round2(baseline.stddev),
             timestamp: now,
+            threshold: th,
+            features: featuresNow(s),
           });
         }
 
@@ -251,6 +273,8 @@ export function useMotion(
         dispBaseline = baseline;
       }
 
+      ring.push(axes);
+      if (ring.length > AXIS_RING) ring.shift();
       historyRef.current = [...historyRef.current.slice(-(HISTORY_LEN - 1)), accelMag];
 
       visualTickRef.current++;
@@ -281,6 +305,7 @@ export function useMotion(
       }
       latestAccel.current = null;
       latestRotation.current = null;
+      axisRingRef.current = [];
       historyRef.current = [];
       skipCountRef.current = 0;
       sentrySkipRef.current = 0;
@@ -319,7 +344,7 @@ export function useMotion(
     mean,
     stddev,
     history,
-    threshold: sentryArmed ? SENTRY_THRESHOLDS[sentryLevel] : THRESHOLD,
+    threshold: sentryArmed ? SENTRY_THRESHOLDS[sentryLevel] : threshold,
     warmupProgress,
     enable,
     recalibrate,

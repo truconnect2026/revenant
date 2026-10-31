@@ -1,7 +1,8 @@
 "use client";
 import { useState, type CSSProperties } from "react";
-import { AnomalyEvent } from "@/lib/types";
+import { AnomalyEvent, EventLabel } from "@/lib/types";
 import { SpectrogramCanvas } from "./SpectrogramCanvas";
+import { EventLabeler } from "./EventLabeler";
 
 const CHANNEL_LABELS: Record<string, string> = {
   emf: "EMF",
@@ -38,9 +39,10 @@ interface Props {
   events: AnomalyEvent[];
   className?: string;
   transcribeEnabled?: boolean;
+  onLabel?: (eventId: string, label: EventLabel) => void;
 }
 
-export function EventLog({ events, className = "", transcribeEnabled = false }: Props) {
+export function EventLog({ events, className = "", transcribeEnabled = false, onLabel }: Props) {
   const [transcriptions, setTranscriptions] = useState<Record<string, string>>({});
   const [transcribing, setTranscribing] = useState<string | null>(null);
 
@@ -119,6 +121,8 @@ export function EventLog({ events, className = "", transcribeEnabled = false }: 
           {ev.spectrogram && ev.spectrogram.length > 0 && (
             <SpectrogramCanvas data={ev.spectrogram} height={40} />
           )}
+
+          {onLabel && <EventLabeler event={ev} onLabel={(l) => onLabel(ev.id, l)} />}
 
           {/* Transcript */}
           {transcriptions[ev.id] && (

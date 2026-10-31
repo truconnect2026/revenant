@@ -2,11 +2,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RollingBaseline } from "@/lib/anomaly";
 import { AnomalyEvent, SensorReading, SensorStatus } from "@/lib/types";
+import { soundFeatures } from "@/lib/lab/features";
+import type { SensorOptions } from "./sensorOptions";
 
 const SAMPLE_HZ = 20;
 const WINDOW_SIZE = 200;
 const WARMUP = 60;
-const THRESHOLD = 3;
+export const DEFAULT_SOUND_THRESHOLD = 3;
 const EMA_ALPHA = 0.3;
 // Skip 15 samples (~750ms) after a trip so the clap's body and reverb tail
 // never get learned into the baseline. Half the cooldown, so the floor still
@@ -89,17 +91,43 @@ function encodeWav(chunks: Float32Array[], sampleRate: number): Blob {
   return new Blob([buffer], { type: "audio/wav" });
 }
 
+interface CaptureResult {
+  url: string;
+  blob: Blob;
+  pcm: Float32Array; // the clip's samples, for feature extraction
+  onset: number; // sample index of the trigger inside `pcm`
+  sampleRate: number;
+}
+
 interface PcmCapture {
   pre: Float32Array[]; // ring snapshot at trigger time (immutable blocks)
   post: Float32Array[]; // accumulates after the trigger
   postRemaining: number; // post-roll samples still to collect
-  resolve: (result: { url: string; blob: Blob } | undefined) => void;
+  resolve: (result: CaptureResult | undefined) => void;
+}
+
+function concat(blocks: Float32Array[]): Float32Array {
+  let n = 0;
+  for (const b of blocks) n += b.length;
+  const out = new Float32Array(n);
+  let o = 0;
+  for (const b of blocks) {
+    out.set(b, o);
+    o += b.length;
+  }
+  return out;
 }
 
 export function useMicrophone(
   active: boolean,
-  onEvent: (e: AnomalyEvent, blob?: Blob) => void
+  onEvent: (e: AnomalyEvent, blob?: Blob) => void,
+  options: SensorOptions = {}
 ): SensorReading & { enable: () => Promise<void>; recalibrate: () => void } {
+  const threshold = options.threshold ?? DEFAULT_SOUND_THRESHOLD;
+  const thresholdRef = useRef(threshold);
+  thresholdRef.current = threshold;
+  const onScoreRef = useRef(options.onScore);
+  onScoreRef.current = options.onScore;
   const [status, setStatus] = useState<SensorStatus>("standby");
   const [value, setValue] = useState<number | null>(null);
   const [sigma, setSigma] = useState(0);
@@ -199,8 +227,17 @@ export function useMicrophone(
             if (c.postRemaining <= 0) done.push(c);
           }
           for (const c of done) {
-            const wav = encodeWav([...c.pre, ...c.post], sampleRateRef.current);
-            c.resolve({ url: URL.createObjectURL(wav), blob: wav });
+            const blocks = [...c.pre, ...c.post];
+            const wav = encodeWav(blocks, sampleRateRef.current);
+            let onset = 0;
+            for (const b of c.pre) onset += b.length;
+            c.resolve({
+              url: URL.createObjectURL(wav),
+              blob: wav,
+              pcm: concat(blocks),
+              onset,
+              sampleRate: sampleRateRef.current,
+            });
           }
           if (done.length > 0) {
             capturesRef.current = caps.filter((c) => !done.includes(c));
@@ -225,7 +262,7 @@ export function useMicrophone(
   // Snapshot the pre-roll ring now, then collect POST_ROLL_SEC of PCM. Every call
   // registers its own capture, so events that overlap a prior capture still get a
   // clip (no more "some rows have a player, some don't").
-  const triggerCapture = useCallback((): Promise<{ url: string; blob: Blob } | undefined> => {
+  const triggerCapture = useCallback((): Promise<CaptureResult | undefined> => {
     if (!processorRef.current) return Promise.resolve(undefined);
     return new Promise((resolve) => {
       capturesRef.current.push({
@@ -312,6 +349,8 @@ export function useMicrophone(
       // Detect on the instantaneous dBFS; the robust median/MAD baseline keeps σ
       // tied to the quiet floor so a clap reads as the many-σ event it is.
       const s = baseline.score(rawDbfs);
+      const now = Date.now();
+      onScoreRef.current?.("sound", now, baseline.isWarmedUp ? s : null, "normal");
 
       // Status transition (immediate — not throttled)
       if (baseline.isWarmedUp && status !== "live") {
@@ -319,8 +358,8 @@ export function useMicrophone(
       }
 
       if (baseline.isWarmedUp) {
-        const now = Date.now();
-        if (s >= THRESHOLD && now - lastTripRef.current > COOLDOWN_MS) {
+        const th = thresholdRef.current;
+        if (s >= th && now - lastTripRef.current > COOLDOWN_MS) {
           lastTripRef.current = now;
           skipCountRef.current = POST_TRIP_SKIP;
           const specSnap = fftHistoryRef.current.slice();
@@ -334,10 +373,21 @@ export function useMicrophone(
             stddev: Math.round(baseline.stddev * 10) / 10,
             timestamp: now,
             spectrogram: specSnap,
+            threshold: th,
           };
+          // Level the instantaneous signal had to clear to trip, in dBFS.
+          const tripDbfs = baseline.mean + th * baseline.stddev;
           triggerCapture().then((result) => {
+            let features: AnomalyEvent["features"] = { peakSigma: eventBase.sigma };
+            if (result) {
+              try {
+                features = soundFeatures(result.pcm, result.sampleRate, result.onset, tripDbfs, s);
+              } catch {
+                // Feature extraction is best-effort; the event itself still logs.
+              }
+            }
             onEventRef.current(
-              { ...eventBase, clipUrl: result?.url },
+              { ...eventBase, clipUrl: result?.url, features },
               result?.blob
             );
           });
@@ -436,7 +486,7 @@ export function useMicrophone(
     stddev,
     history,
     spectrum,
-    threshold: THRESHOLD,
+    threshold,
     warmupProgress,
     enable,
     recalibrate,

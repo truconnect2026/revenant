@@ -14,6 +14,22 @@ An honest field instrument that turns a phone into an environmental sensor reado
 
 Each channel keeps a rolling window of its own recent samples and derives mean + sample stddev. An event fires when `|reading - mean| / stddev >= threshold` (approx 4 sigma for EMF/sound, 4.5 sigma for motion). Samples are scored **before** insertion so spikes don't dilute the baseline. A warmup period of ~60 samples and a 1.5s cooldown between events prevent false positives and repeated logging.
 
+## Learning loop and the Lab
+
+Revenant can test which detections are real by comparing against ground truth.
+
+- **Session types**: *Investigate* (normal hunt), *Control* (a place with no claims, same setup; measures false alarms) and *Calibrate* (make known sounds and movements on purpose).
+- **Test marks**: during a session, tap a mark (Knock, Voice, Magnet…) and then do it. Events within 2 s before to 4 s after are tagged as tests automatically.
+- **Felt something + Blind mode**: log subjective moments with the readouts hidden, so the screen can't prompt them.
+- **Labels**: every event can be tagged with its real cause (HVAC, footsteps, …) or marked unexplained, in the live log, past sessions or the Lab.
+- **Score log**: each channel's raw σ score is stored at 10 Hz so thresholds can be re-tested after the fact.
+
+Open **`/lab`** to see the analysis built from this device's data: dataset overview, a k-nearest-neighbours source model with a leave-one-session-out confusion matrix and an "unknown" reject option, a learning curve, a feature map, what each sensor catches per stimulus, a threshold sweep (detection vs false alarms per hour), investigation-vs-control rates with corrected p-values, a felt-vs-sensor permutation test, a residue queue, and a log for testing other ghost-hunting gear. Every rate shows its sample size and 95% interval; panels without enough data say what's missing instead of drawing a chart. The lab only recommends threshold changes — applying one is a deliberate tap and is logged.
+
+Set `LAB_PASSCODE` in the Vercel project to lock `/lab` behind a passcode. Data lives in the browser's IndexedDB; use *Export dataset* / *Import dataset* on the Lab overview to merge data from several phones.
+
+Run the analysis unit tests with `npm test`.
+
 ## Platform support
 
 - **Magnetometer**: Chrome/Edge on Android over HTTPS only. iOS Safari does not expose the Generic Sensor API. The panel shows a clear "no channel" message with guidance.

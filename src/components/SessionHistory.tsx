@@ -1,12 +1,20 @@
 "use client";
-import { SessionData } from "@/lib/types";
+import { EventLabel, SessionData } from "@/lib/types";
 import { idbGetSessionForExport, idbLoadSessions } from "@/lib/idb";
 import { SpectrogramCanvas } from "./SpectrogramCanvas";
+import { EventLabeler } from "./EventLabeler";
 
 interface Props {
   sessions: SessionData[];
   onSessionsChange: (sessions: SessionData[]) => void;
+  onLabel?: (sessionId: string, eventId: string, label: EventLabel) => void;
 }
+
+const TYPE_TAG: Record<string, { text: string; cls: string }> = {
+  investigation: { text: "Investigate", cls: "text-zinc-400 border-zinc-700" },
+  null: { text: "Control", cls: "text-sky-300 border-sky-800" },
+  calibration: { text: "Calibrate", cls: "text-violet-300 border-violet-800" },
+};
 
 function fmt(ms: number) {
   const s = Math.round(ms / 1000);
@@ -32,7 +40,7 @@ async function exportSession(session: SessionData) {
     result.blobs.forEach((blob, id) => {
       const ts = result.session.events.find((e) => e.clipId === id)?.timestamp ?? 0;
       const label = ts ? new Date(ts).toISOString().replace(/[:.]/g, "-") : `clip-${clipIndex}`;
-      downloadBlob(blob, `revenant-${session.id.slice(0, 8)}-${label}.webm`);
+      downloadBlob(blob, `revenant-${session.id.slice(0, 8)}-${label}.wav`);
       clipIndex++;
     });
   }
@@ -44,6 +52,11 @@ async function exportSession(session: SessionData) {
     ended_at: session.ended_at,
     label: session.label,
     location: session.location,
+    type: session.type,
+    channels: session.channels,
+    thresholds: session.thresholds,
+    stimuli: session.stimuli,
+    subjective: session.subjective,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     events: session.events.map(({ clipUrl: _url, ...ev }) => ev),
   };
@@ -51,7 +64,7 @@ async function exportSession(session: SessionData) {
   downloadBlob(new Blob([json], { type: "application/json" }), `revenant-${session.id.slice(0, 8)}.json`);
 }
 
-export function SessionHistory({ sessions, onSessionsChange }: Props) {
+export function SessionHistory({ sessions, onSessionsChange, onLabel }: Props) {
   if (sessions.length === 0) return null;
 
   const refresh = () => {
@@ -93,6 +106,11 @@ export function SessionHistory({ sessions, onSessionsChange }: Props) {
                 {s.label && (
                   <span className="ml-2 text-zinc-500">{s.label}</span>
                 )}
+                {s.type && TYPE_TAG[s.type] && (
+                  <span className={`ml-2 px-1 py-px rounded border text-[9px] uppercase tracking-wider ${TYPE_TAG[s.type].cls}`}>
+                    {TYPE_TAG[s.type].text}
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-3 shrink-0 text-zinc-500">
                 <span>{s.ended_at != null ? fmt(s.ended_at - s.started_at) : "—"}</span>
@@ -112,6 +130,11 @@ export function SessionHistory({ sessions, onSessionsChange }: Props) {
             {s.location && (
               <div className="mt-0.5 text-zinc-600">
                 {s.location.lat.toFixed(4)}, {s.location.lng.toFixed(4)}
+              </div>
+            )}
+            {((s.stimuli?.length ?? 0) > 0 || (s.subjective?.length ?? 0) > 0) && (
+              <div className="mt-0.5 text-zinc-600">
+                {s.stimuli?.length ?? 0} test marks · {s.subjective?.length ?? 0} felt
               </div>
             )}
 
@@ -149,6 +172,7 @@ export function SessionHistory({ sessions, onSessionsChange }: Props) {
                     {ev.spectrogram && ev.spectrogram.length > 0 && (
                       <SpectrogramCanvas data={ev.spectrogram} height={32} />
                     )}
+                    {onLabel && <EventLabeler event={ev} onLabel={(l) => onLabel(s.id, ev.id, l)} compact />}
                   </div>
                 ))}
               </div>

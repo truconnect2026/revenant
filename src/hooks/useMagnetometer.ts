@@ -2,11 +2,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RollingBaseline } from "@/lib/anomaly";
 import { AnomalyEvent, SensorReading, SensorStatus } from "@/lib/types";
+import { axisFeatures } from "@/lib/lab/features";
+import type { SensorOptions } from "./sensorOptions";
 
 const SAMPLE_HZ = 20;
 const WINDOW_SIZE = 200;
 const WARMUP = 60;
-const THRESHOLD = 4;
+export const DEFAULT_EMF_THRESHOLD = 4;
+const AXIS_RING = 20;
 const COOLDOWN_MS = 1500;
 const HISTORY_LEN = 80;
 const POST_TRIP_SKIP = 5;
@@ -14,8 +17,15 @@ const VISUAL_EVERY = 4; // throttle visual setState to ~5Hz
 
 export function useMagnetometer(
   active: boolean,
-  onEvent: (e: AnomalyEvent, blob?: Blob) => void
+  onEvent: (e: AnomalyEvent, blob?: Blob) => void,
+  options: SensorOptions = {}
 ): SensorReading & { enable: () => void; recalibrate: () => void } {
+  const threshold = options.threshold ?? DEFAULT_EMF_THRESHOLD;
+  const thresholdRef = useRef(threshold);
+  thresholdRef.current = threshold;
+  const onScoreRef = useRef(options.onScore);
+  onScoreRef.current = options.onScore;
+  const axisRingRef = useRef<Array<[number, number, number]>>([]);
   const [status, setStatus] = useState<SensorStatus>("standby");
   const [value, setValue] = useState<number | null>(null);
   const [sigma, setSigma] = useState(0);
@@ -88,6 +98,8 @@ export function useMagnetometer(
       const magnitude = Math.hypot(r.x, r.y, r.z);
       const baseline = baselineRef.current;
       const s = baseline.score(magnitude);
+      const axes: [number, number, number] = [r.x, r.y, r.z];
+      onScoreRef.current?.("emf", Date.now(), baseline.isWarmedUp ? s : null, "normal");
 
       if (baseline.isWarmedUp && status !== "live") {
         setStatus("live");
@@ -95,7 +107,8 @@ export function useMagnetometer(
 
       if (baseline.isWarmedUp) {
         const now = Date.now();
-        if (s >= THRESHOLD && now - lastTripRef.current > COOLDOWN_MS) {
+        const th = thresholdRef.current;
+        if (s >= th && now - lastTripRef.current > COOLDOWN_MS) {
           lastTripRef.current = now;
           skipCountRef.current = POST_TRIP_SKIP;
           onEventRef.current({
@@ -107,6 +120,8 @@ export function useMagnetometer(
             mean: Math.round(baseline.mean * 100) / 100,
             stddev: Math.round(baseline.stddev * 100) / 100,
             timestamp: now,
+            threshold: th,
+            features: axisFeatures(axisRingRef.current, axes, s),
           });
         }
       }
@@ -117,6 +132,8 @@ export function useMagnetometer(
         baseline.push(magnitude);
       }
 
+      axisRingRef.current.push(axes);
+      if (axisRingRef.current.length > AXIS_RING) axisRingRef.current.shift();
       historyRef.current = [...historyRef.current.slice(-(HISTORY_LEN - 1)), magnitude];
 
       visualTickRef.current++;
@@ -144,6 +161,7 @@ export function useMagnetometer(
       }
       if (intervalRef.current) clearInterval(intervalRef.current);
       latestReading.current = null;
+      axisRingRef.current = [];
       historyRef.current = [];
       skipCountRef.current = 0;
       visualTickRef.current = 0;
@@ -173,7 +191,7 @@ export function useMagnetometer(
     mean,
     stddev,
     history,
-    threshold: THRESHOLD,
+    threshold,
     warmupProgress,
     enable,
     recalibrate,

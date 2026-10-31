@@ -1,7 +1,15 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AnomalyEvent, SessionData, SentryLevel } from "@/lib/types";
-import { idbSaveSession, idbLoadSessions } from "@/lib/idb";
+import {
+  AnomalyEvent, Channel, EventLabel, SCHEMA_VERSION, SessionData, SessionType, SentryLevel,
+  StimulusMark, SubjectiveMark,
+} from "@/lib/types";
+import { idbSaveSession, idbLoadSessions, idbSaveScoreChunks } from "@/lib/idb";
+import { ScoreRecorder } from "@/lib/lab/scoreLog";
+import { runAroundPeak } from "@/lib/lab/features";
+import { applyStimulusLabels, expectedChannels } from "@/lib/lab/sources";
+import { DEFAULT_THRESHOLDS, loadThresholds } from "@/lib/lab/thresholds";
+import type { ScoreListener } from "@/hooks/sensorOptions";
 import { hapticTap, soundTick } from "@/lib/feedback";
 import { useMagnetometer } from "@/hooks/useMagnetometer";
 import { useMicrophone } from "@/hooks/useMicrophone";
@@ -12,8 +20,12 @@ import { EventLog } from "./EventLog";
 import { SessionHistory } from "./SessionHistory";
 import { SettingsControl } from "./SettingsControl";
 import { FirstRunIntro } from "./FirstRunIntro";
+import { FieldControls, SessionTypePicker } from "./FieldControls";
 
-const MAX_EVENTS = 200;
+const MAX_EVENTS = 200; // shown in the live log; the session record keeps every event
+const SCORE_FLUSH_MS = 15000;
+const SCORE_RING = 160; // ~8 s of 20 Hz scores per channel, for event duration
+const DURATION_DELAY_MS = 2500; // wait for the event to finish before measuring it
 
 function fmtElapsed(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -37,9 +49,15 @@ export function Dashboard() {
   const [sentryLevel, setSentryLevel] = useState<SentryLevel>("med");
   // Which channels take part in a session (include/exclude). Default: all on.
   const [channelOn, setChannelOn] = useState({ emf: true, sound: true, motion: true });
+  // Learning loop
+  const [sessionType, setSessionType] = useState<SessionType>("investigation");
+  const [blind, setBlind] = useState(false);
+  const [stimuli, setStimuli] = useState<StimulusMark[]>([]);
+  const [subjective, setSubjective] = useState<SubjectiveMark[]>([]);
+  const [thresholds, setThresholds] = useState<Record<Channel, number>>(DEFAULT_THRESHOLDS);
 
-  const settingsRef = useRef({ haptics: true, soundCue: false });
-  settingsRef.current = { haptics, soundCue };
+  const settingsRef = useRef({ haptics: true, soundCue: false, blind: false });
+  settingsRef.current = { haptics, soundCue, blind };
 
   const sessionIdRef = useRef<string>("");
   const startedAtRef = useRef<number>(0);
@@ -48,10 +66,21 @@ export function Dashboard() {
   sessionLabelRef.current = sessionLabel;
   const clipBlobsRef = useRef<Map<string, Blob>>(new Map());
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
+  const sessionTypeRef = useRef<SessionType>("investigation");
+  sessionTypeRef.current = sessionType;
+  const channelOnRef = useRef(channelOn);
+  channelOnRef.current = channelOn;
+  const thresholdsRef = useRef(thresholds);
+  thresholdsRef.current = thresholds;
+  const stimuliRef = useRef<StimulusMark[]>([]);
+  const subjectiveRef = useRef<SubjectiveMark[]>([]);
+  const recorderRef = useRef<ScoreRecorder | null>(null);
+  const scoreRingRef = useRef<Record<Channel, Array<[number, number]>>>({ emf: [], sound: [], motion: [] });
 
   // Load past sessions from IndexedDB on first render
   useEffect(() => {
     idbLoadSessions().then(setPastSessions).catch(() => {});
+    setThresholds(loadThresholds());
   }, []);
 
   // Check if transcription is configured
@@ -76,6 +105,8 @@ export function Dashboard() {
         const p = JSON.parse(ch) as Partial<Record<"emf" | "sound" | "motion", boolean>>;
         setChannelOn({ emf: p.emf !== false, sound: p.sound !== false, motion: p.motion !== false });
       }
+      const st = localStorage.getItem("revenant.sessionType");
+      if (st === "investigation" || st === "null" || st === "calibration") setSessionType(st);
       setIntroSeen(localStorage.getItem("revenant.introSeen") === "1");
     } catch {
       setIntroSeen(true);
@@ -136,51 +167,139 @@ export function Dashboard() {
   const coordsRef = useRef(coords);
   coordsRef.current = coords;
 
+  // Snapshot of the live session in its stored shape (every event, all metadata).
+  const buildSession = useCallback((endedAt: number | null): SessionData => ({
+    id: sessionIdRef.current,
+    started_at: startedAtRef.current,
+    ended_at: endedAt,
+    label: sessionLabelRef.current || null,
+    location: coordsRef.current,
+    events: eventsRef.current,
+    type: sessionTypeRef.current,
+    channels: { ...channelOnRef.current },
+    thresholds: { ...thresholdsRef.current },
+    device: typeof navigator !== "undefined" ? { userAgent: navigator.userAgent } : undefined,
+    stimuli: stimuliRef.current,
+    subjective: subjectiveRef.current,
+    schema: SCHEMA_VERSION,
+  }), []);
+
+  // Replace the session's events: keep the full list in the ref (that's what
+  // gets saved), show only the newest MAX_EVENTS live, and persist.
+  const commitEvents = useCallback((next: AnomalyEvent[], newClips: Map<string, Blob> = new Map()) => {
+    const labeled = applyStimulusLabels(next, stimuliRef.current);
+    eventsRef.current = labeled;
+    setEvents((prev) => {
+      const shown = labeled.slice(-MAX_EVENTS);
+      // Free audio memory for rows that scrolled out of the live log. The clip
+      // itself is already in IndexedDB.
+      const keep = new Set(shown.map((e) => e.id));
+      prev.forEach((e) => { if (!keep.has(e.id) && e.clipUrl) URL.revokeObjectURL(e.clipUrl); });
+      return shown;
+    });
+    // Incremental IDB write — crash doesn't lose the night's data
+    idbSaveSession(buildSession(null), newClips).catch(() => {});
+  }, [buildSession]);
+
+  const patchEvent = useCallback((id: string, fn: (e: AnomalyEvent) => AnomalyEvent) => {
+    if (!eventsRef.current.some((e) => e.id === id)) return;
+    commitEvents(eventsRef.current.map((e) => (e.id === id ? fn(e) : e)));
+  }, [commitEvents]);
+
+  // Measure how long an event stayed above its trip level, from the live score
+  // stream, once it has had time to finish.
+  const measureDuration = useCallback((ev: AnomalyEvent) => {
+    setTimeout(() => {
+      const ring = scoreRingRef.current[ev.channel];
+      if (!ring.length || ev.threshold === undefined) return;
+      let anchor = 0;
+      ring.forEach(([ts], i) => {
+        if (Math.abs(ts - ev.timestamp) < Math.abs(ring[anchor][0] - ev.timestamp)) anchor = i;
+      });
+      const run = runAroundPeak(ring.map((r) => r[1]), ev.threshold, 50, anchor, 10);
+      if (!run) return;
+      patchEvent(ev.id, (e) => ({
+        ...e,
+        features: { peakSigma: e.sigma, ...e.features, durationMs: run.durationMs, riseTimeMs: run.riseTimeMs },
+      }));
+    }, DURATION_DELAY_MS);
+  }, [patchEvent]);
+
   const addEvent = useCallback((ev: AnomalyEvent, blob?: Blob) => {
     // Signature anomaly beat: fire hardware feedback in step with the card
-    // reaction (driven by pulseId) and the row slide-in.
-    if (settingsRef.current.haptics) hapticTap();
-    if (settingsRef.current.soundCue) soundTick();
+    // reaction (driven by pulseId) and the row slide-in. Silent in blind mode.
+    if (!settingsRef.current.blind) {
+      if (settingsRef.current.haptics) hapticTap();
+      if (settingsRef.current.soundCue) soundTick();
+    }
 
     const newClips = new Map<string, Blob>();
     if (blob) {
       newClips.set(ev.id, blob);
       clipBlobsRef.current.set(ev.id, blob);
     }
+    const full: AnomalyEvent = { ...ev, label: ev.label ?? { status: "unlabeled" } };
+    commitEvents([...eventsRef.current, full], newClips);
+    if (full.features?.durationMs === undefined) measureDuration(full);
+  }, [commitEvents, measureDuration]);
 
-    eventsRef.current = [...eventsRef.current, ev];
+  const onScore = useCallback<ScoreListener>((ch, ts, score, mode) => {
+    const ring = scoreRingRef.current[ch];
+    ring.push([ts, score ?? NaN]);
+    if (ring.length > SCORE_RING) ring.shift();
+    // Only normal-mode scores are logged for the threshold sweep; Sentry uses a
+    // different baseline and threshold, so mixing them would skew it.
+    recorderRef.current?.record(ch, ts, mode === "normal" ? score : null);
+  }, []);
 
-    setEvents((prev) => {
-      let next = [...prev, ev];
-      if (next.length > MAX_EVENTS) {
-        // Revoke URLs of evicted events to free memory
-        const evicted = next.slice(0, next.length - MAX_EVENTS);
-        evicted.forEach((e) => { if (e.clipUrl) URL.revokeObjectURL(e.clipUrl); });
-        next = next.slice(-MAX_EVENTS);
-        eventsRef.current = next;
-      }
+  // Persist the score log every few seconds while recording.
+  useEffect(() => {
+    if (!running) return;
+    const id = setInterval(() => {
+      const chunks = recorderRef.current?.takeDirty() ?? [];
+      idbSaveScoreChunks(chunks).catch(() => {});
+    }, SCORE_FLUSH_MS);
+    return () => clearInterval(id);
+  }, [running]);
+
+  const addStimulus = useCallback((type: string) => {
+    const mark: StimulusMark = { id: crypto.randomUUID(), type, timestamp: Date.now(), expected: expectedChannels(type) };
+    stimuliRef.current = [...stimuliRef.current, mark];
+    setStimuli(stimuliRef.current);
+    commitEvents(eventsRef.current); // re-match recent events and persist
+  }, [commitEvents]);
+
+  const addFelt = useCallback(() => {
+    const mark: SubjectiveMark = { id: crypto.randomUUID(), timestamp: Date.now(), blind: settingsRef.current.blind };
+    subjectiveRef.current = [...subjectiveRef.current, mark];
+    setSubjective(subjectiveRef.current);
+    if (settingsRef.current.haptics) hapticTap();
+    idbSaveSession(buildSession(null), new Map()).catch(() => {});
+  }, [buildSession]);
+
+  const labelLiveEvent = useCallback((id: string, label: EventLabel) => {
+    patchEvent(id, (e) => ({ ...e, label }));
+  }, [patchEvent]);
+
+  const labelPastEvent = useCallback((sessionId: string, eventId: string, label: EventLabel) => {
+    setPastSessions((prev) => prev.map((sess) => {
+      if (sess.id !== sessionId) return sess;
+      const next = { ...sess, events: sess.events.map((e) => (e.id === eventId ? { ...e, label } : e)) };
+      idbSaveSession(next, new Map()).catch(() => {});
       return next;
-    });
+    }));
+  }, []);
 
-    // Incremental IDB write — crash doesn't lose the night's data
-    idbSaveSession(
-      {
-        id: sessionIdRef.current,
-        started_at: startedAtRef.current,
-        ended_at: null,
-        label: sessionLabelRef.current || null,
-        location: coordsRef.current,
-        events: eventsRef.current,
-      },
-      newClips
-    ).catch(() => {});
+  const changeSessionType = useCallback((t: SessionType) => {
+    setSessionType(t);
+    try { localStorage.setItem("revenant.sessionType", t); } catch {}
   }, []);
 
   // Per-channel active = session running AND this channel included. An excluded
   // channel has active=false, so its hook holds no resources and never samples.
-  const emf = useMagnetometer(running && channelOn.emf, addEvent);
-  const sound = useMicrophone(running && channelOn.sound, addEvent);
-  const motion = useMotion(running && channelOn.motion, addEvent, sentryArmed, sentryLevel);
+  const emf = useMagnetometer(running && channelOn.emf, addEvent, { threshold: thresholds.emf, onScore });
+  const sound = useMicrophone(running && channelOn.sound, addEvent, { threshold: thresholds.sound, onScore });
+  const motion = useMotion(running && channelOn.motion, addEvent, sentryArmed, sentryLevel, { threshold: thresholds.motion, onScore });
 
   const toggleSentry = useCallback(() => setSentryArmed((a) => !a), []);
   const changeSentryLevel = useCallback((l: SentryLevel) => {
@@ -216,6 +335,12 @@ export function Dashboard() {
     sessionIdRef.current = crypto.randomUUID();
     startedAtRef.current = Date.now();
     setEvents([]);
+    stimuliRef.current = [];
+    subjectiveRef.current = [];
+    setStimuli([]);
+    setSubjective([]);
+    scoreRingRef.current = { emf: [], sound: [], motion: [] };
+    recorderRef.current = new ScoreRecorder(sessionIdRef.current, startedAtRef.current);
 
     // One-tap start: arm every INCLUDED channel. The permission-triggering calls
     // (mic getUserMedia, motion requestPermission) must fire SYNCHRONOUSLY inside
@@ -239,19 +364,15 @@ export function Dashboard() {
   const stopSession = async () => {
     setRunning(false);
     setSentryArmed(false);
+    setBlind(false);
     releaseWakeLock();
 
-    const session: SessionData = {
-      id: sessionIdRef.current,
-      started_at: startedAtRef.current,
-      ended_at: Date.now(),
-      label: sessionLabelRef.current || null,
-      location: coordsRef.current,
-      events: eventsRef.current,
-    };
+    const session = buildSession(Date.now());
 
-    // Final IDB save with ended_at timestamp
+    // Final IDB save with ended_at timestamp, plus the rest of the score log.
     await idbSaveSession(session, new Map()).catch(() => {});
+    await idbSaveScoreChunks(recorderRef.current?.takeDirty() ?? []).catch(() => {});
+    recorderRef.current = null;
     const loaded = await idbLoadSessions().catch(() => pastSessions);
     setPastSessions(loaded);
 
@@ -318,15 +439,6 @@ export function Dashboard() {
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            {!running && (
-              <input
-                type="text"
-                placeholder="Session label"
-                value={sessionLabel}
-                onChange={(e) => setSessionLabel(e.target.value)}
-                className="hidden sm:block bg-zinc-900 border border-zinc-700 rounded px-3 py-1.5 text-xs font-mono text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 w-40"
-              />
-            )}
             {running && (
               <button
                 onClick={handleRecalibrate}
@@ -350,6 +462,44 @@ export function Dashboard() {
           </div>
         </header>
 
+        {/* Session setup (before recording) */}
+        {!running && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <SessionTypePicker value={sessionType} onChange={changeSessionType} />
+            <input
+              type="text"
+              placeholder="Location (e.g. Old mill, basement)"
+              value={sessionLabel}
+              onChange={(e) => setSessionLabel(e.target.value)}
+              aria-label="Session location label"
+              className="self-start w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-1.5 text-xs font-mono text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+            />
+          </div>
+        )}
+
+        {running && (
+          <FieldControls
+            sessionType={sessionType}
+            blind={blind}
+            onBlind={setBlind}
+            onStimulus={addStimulus}
+            onFelt={addFelt}
+            stimulusCount={stimuli.length}
+            feltCount={subjective.length}
+          />
+        )}
+
+        {running && blind ? (
+          <div className="panel-card rounded-lg p-6 flex flex-col items-center gap-2 text-center">
+            <span className="rec-dot inline-block w-2.5 h-2.5 rounded-full bg-red-500" />
+            <p className="font-display text-xs uppercase tracking-[0.2em] text-zinc-300">Blind mode</p>
+            <p className="text-[11px] font-mono text-zinc-500 max-w-xs leading-relaxed">
+              Sensors are still recording. Readouts, events and alerts are hidden so they can&apos;t
+              influence what you report. Tap Felt something whenever you notice anything.
+            </p>
+          </div>
+        ) : (
+        <>
         {/* Sensor strips — all three visible without scrolling on a phone */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-start">
           <SensorPanel
@@ -412,12 +562,17 @@ export function Dashboard() {
               events={events}
               className="flex-1 min-h-0 p-2"
               transcribeEnabled={transcribeEnabled}
+              onLabel={labelLiveEvent}
             />
           </div>
         </section>
+        </>
+        )}
 
         {/* Past sessions */}
-        {!running && <SessionHistory sessions={pastSessions} onSessionsChange={setPastSessions} />}
+        {!running && (
+          <SessionHistory sessions={pastSessions} onSessionsChange={setPastSessions} onLabel={labelPastEvent} />
+        )}
 
         {/* Footer */}
         <footer className="text-center text-[10px] font-mono text-zinc-600 leading-relaxed">
