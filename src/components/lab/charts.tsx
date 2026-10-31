@@ -473,3 +473,40 @@ export function RateIntervals({
     </svg>
   );
 }
+
+// ── Feature importance: bars around zero (helps → right, hurts → left) ──────
+
+export function ImportanceBars({ items }: { items: { feature: string; drop: number }[] }) {
+  const rowH = 22;
+  const labelW = 96;
+  const H = items.length * rowH + 22;
+  const max = Math.max(0.02, ...items.map((i) => Math.abs(i.drop)));
+  const zero = labelW + (W - labelW - 44) / 2;
+  const half = (W - labelW - 44) / 2;
+  const x = (v: number) => zero + (v / max) * half;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Legend items={[{ name: "Helps accuracy", color: SERIES[0] }, { name: "Hurts accuracy", color: SERIES[1] }]} />
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="How much accuracy drops when each feature is left out">
+        <line x1={zero} x2={zero} y1={4} y2={H - 16} stroke={AXIS} />
+        {items.map((it, i) => {
+          const y = 6 + i * rowH;
+          const x0 = Math.min(zero, x(it.drop));
+          const w = Math.max(Math.abs(x(it.drop) - zero), 1);
+          return (
+            <g key={it.feature}>
+              <text x={labelW - 6} y={y + 12} fill={INK.secondary} fontSize={10} textAnchor="end">{it.feature}</text>
+              <rect x={x0} y={y + 3} width={w} height={rowH - 8} rx={3} fill={it.drop >= 0 ? SERIES[0] : SERIES[1]}>
+                <title>{`${it.feature}: leaving it out changes accuracy by ${(-it.drop * 100).toFixed(1)} points`}</title>
+              </rect>
+              <text x={it.drop >= 0 ? x0 + w + 4 : zero + 4} y={y + 12} fill={INK.muted} fontSize={9} textAnchor="start">
+                {(it.drop * 100 >= 0 ? "+" : "") + (it.drop * 100).toFixed(1)}
+              </text>
+            </g>
+          );
+        })}
+        <text x={zero} y={H - 3} fill={INK.muted} fontSize={9} textAnchor="middle">0 (accuracy points)</text>
+      </svg>
+    </div>
+  );
+}

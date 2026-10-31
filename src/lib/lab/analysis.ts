@@ -8,9 +8,10 @@ import { SCORE_HZ, SLOT_MS, observedHours } from "./scoreLog";
 import { STIMULUS_WINDOW_S, sweep, windowMax, type SweepResult } from "./sweep";
 import { benjaminiHochberg, compareRates, mulberry32, wilson, type Interval } from "./stats";
 import { STIMULUS_TYPES } from "./sources";
+import { DEFAULT_CONFIG, type LearningConfig } from "./config";
 import {
-  UNKNOWN, crossValidate, featureVector, fitKnn, predict, readiness, trainingRows,
-  FEATURE_NAMES, type ModelVersion, type Readiness, type Row, type Evaluation,
+  UNKNOWN, crossValidate, maskedVector, fitKnn, predict, readiness, trainingRows,
+  FEATURE_NAMES, featureMask, type ModelVersion, type Readiness, type Row, type Evaluation,
 } from "./model";
 
 /** Stored sessions use the same shape as live ones for analysis purposes. */
@@ -94,11 +95,15 @@ export interface CalibrationMatrix {
 }
 
 /** For every stimulus type × channel: how often a real event followed. */
-export function calibrationMatrix(sessions: LabSession[], series: SeriesMap): CalibrationMatrix {
+export function calibrationMatrix(
+  sessions: LabSession[],
+  series: SeriesMap,
+  window: [number, number] = STIMULUS_WINDOW_S
+): CalibrationMatrix {
   const types = STIMULUS_TYPES.map((s) => s.type);
   const acc: Record<string, Record<Channel, { hits: number; n: number; lat: number[] }>> = {};
   let total = 0;
-  const [w0, w1] = STIMULUS_WINDOW_S;
+  const [w0, w1] = window;
   for (const s of sessions) {
     for (const st of s.stimuli ?? []) {
       total++;
@@ -146,7 +151,12 @@ function stimulusSlot(s: LabSession, st: StimulusMark): number {
   return Math.round((st.timestamp - s.started_at) / SLOT_MS);
 }
 
-export function thresholdSweep(channel: Channel, sessions: LabSession[], series: SeriesMap): SweepResult {
+export function thresholdSweep(
+  channel: Channel,
+  sessions: LabSession[],
+  series: SeriesMap,
+  config: Pick<LearningConfig, "cooldownS" | "stimulusWindow"> = DEFAULT_CONFIG
+): SweepResult {
   const nullSeries: Float32Array[] = [];
   const stimulusPeaks: number[] = [];
   for (const s of sessions) {
@@ -155,11 +165,11 @@ export function thresholdSweep(channel: Channel, sessions: LabSession[], series:
     if (s.type === "null") nullSeries.push(ser);
     for (const st of s.stimuli ?? []) {
       if (!st.expected.includes(channel)) continue;
-      const peak = windowMax(ser, stimulusSlot(s, st));
+      const peak = windowMax(ser, stimulusSlot(s, st), config.stimulusWindow);
       if (!Number.isNaN(peak)) stimulusPeaks.push(peak);
     }
   }
-  return sweep({ nullSeries, stimulusPeaks });
+  return sweep({ nullSeries, stimulusPeaks }, undefined, Math.max(1, Math.round(config.cooldownS * SCORE_HZ)));
 }
 
 // ── Location effect (control vs investigation) ──────────────────────────────
@@ -330,14 +340,19 @@ export interface TrainOutcome {
   rows: Row[];
 }
 
-export function trainChannel(channel: Channel, sessions: LabSession[], previous: ModelVersion[]): TrainOutcome {
-  const rows = trainingRows(sessions, channel);
-  const ready = readiness(rows);
+export function trainChannel(
+  channel: Channel,
+  sessions: LabSession[],
+  previous: ModelVersion[],
+  config: LearningConfig = DEFAULT_CONFIG
+): TrainOutcome {
+  const rows = trainingRows(sessions, channel, config);
+  const ready = readiness(rows, config);
   const predictions = new Map<string, { source: string; confidence: number; distance: number }>();
   if (!ready.ok) return { channel, readiness: ready, predictions, rows };
 
-  const evaluation = crossValidate(rows);
-  const model = fitKnn(rows);
+  const evaluation = crossValidate(rows, config);
+  const model = fitKnn(rows, config);
   const versionNo = previous.filter((v) => v.channel === channel).reduce((m, v) => Math.max(m, v.version), 0) + 1;
 
   let total = 0;
@@ -347,8 +362,8 @@ export function trainChannel(channel: Channel, sessions: LabSession[], previous:
     total++;
     const st = e.label?.status ?? "unlabeled";
     if (st === "explained" || st === "injected") continue;
-    const x = featureVector(e);
-    const p = x ? predict(model, x) : null;
+    const x = maskedVector(e, config);
+    const p = x ? predict(model, x, config) : null;
     if (p) predictions.set(e.id, p);
     // Residue: not explained by a human, and the model can't place it either.
     if (st === "unexplained" || !p || p.source === UNKNOWN) residue++;
@@ -369,7 +384,8 @@ export function trainChannel(channel: Channel, sessions: LabSession[], previous:
     perClass: evaluation.perClass,
     confusion: evaluation.confusion,
     predLabels: evaluation.predLabels,
-    featureSet: FEATURE_NAMES[channel],
+    featureSet: featureMask(channel, config).map((i) => FEATURE_NAMES[channel][i]),
+    config,
     rejectDistance: model.rejectDistance,
     residue: total ? residue / total : NaN,
     totalEvents: total,

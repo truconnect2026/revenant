@@ -7,7 +7,8 @@ import {
   calibrationMatrix, locationEffect, overview, residueQueue, subjectiveTest, thresholdSweep, trainChannel,
   type LabSession,
 } from "@/lib/lab/analysis";
-import { UNKNOWN, featureVector, fitScaler, scale } from "@/lib/lab/model";
+import { UNKNOWN, maskedVector, fitScaler, scale } from "@/lib/lab/model";
+import { loadConfig } from "@/lib/lab/config";
 import { pca2 } from "@/lib/lab/pca";
 import { recommendThreshold } from "@/lib/lab/sweep";
 import { STIMULUS_TYPES } from "@/lib/lab/sources";
@@ -131,7 +132,7 @@ export function ModelPanel({
     setBusy(true);
     setNote(null);
     try {
-      const out = trainChannel(channel, data.sessions as LabSession[], data.versions);
+      const out = trainChannel(channel, data.sessions as LabSession[], data.versions, loadConfig());
       if (!out.version) {
         setNote(`Can't train yet: need ${out.readiness.missing.join(", ")}.`);
         return;
@@ -172,7 +173,7 @@ export function ModelPanel({
     const items: { s: StoredSession; e: StoredSession["events"][number]; x: number[] }[] = [];
     for (const s of data.sessions) for (const e of s.events) {
       if (e.channel !== channel) continue;
-      const x = featureVector(e);
+      const x = maskedVector(e, loadConfig());
       if (x) items.push({ s, e, x });
     }
     if (items.length < 5) return { items, points: [], explained: [0, 0] as [number, number], legend: [] as { name: string; color: string; hollow?: boolean }[] };
@@ -335,7 +336,7 @@ export function ModelPanel({
 // ── 3. Calibration detection matrix ─────────────────────────────────────────
 
 export function CalibrationPanel({ data }: { data: LabData }) {
-  const m = useMemo(() => calibrationMatrix(data.sessions as LabSession[], data.series), [data]);
+  const m = useMemo(() => calibrationMatrix(data.sessions as LabSession[], data.series, loadConfig().stimulusWindow), [data]);
   return (
     <Panel
       title="What each sensor catches"
@@ -378,9 +379,9 @@ export function CalibrationPanel({ data }: { data: LabData }) {
 // ── 4. Threshold sweep ──────────────────────────────────────────────────────
 
 export function ThresholdPanel({ data, channel, reload }: { data: LabData; channel: Channel; reload: () => void }) {
-  const [maxFp, setMaxFp] = useState(1);
+  const [maxFp, setMaxFp] = useState(() => loadConfig().maxFpPerHour);
   const [sel, setSel] = useState<number | null>(null);
-  const res = useMemo(() => thresholdSweep(channel, data.sessions as LabSession[], data.series), [data, channel]);
+  const res = useMemo(() => thresholdSweep(channel, data.sessions as LabSession[], data.series, loadConfig()), [data, channel]);
   // Read fresh each render: panels only render client-side after data loads.
   const current = (typeof window === "undefined" ? DEFAULT_THRESHOLDS : loadThresholds())[channel];
   const rec = recommendThreshold(res.points, maxFp);

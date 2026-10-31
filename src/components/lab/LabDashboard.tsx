@@ -6,6 +6,7 @@ import { useLabData, type LabData } from "./useLabData";
 import { getDeviceId } from "@/lib/lab/device";
 import { useCommunityData } from "./useCommunityData";
 import { ResearchPanel } from "./ResearchPanel";
+import { TuningPanel } from "./TuningPanel";
 import {
   CalibrationPanel, ChannelPicker, DataPanel, FeltPanel, GearPanel, LocationPanel, ModelPanel, OverviewPanel,
   ResiduePanel, ThresholdPanel,
@@ -20,10 +21,11 @@ const TABS = [
   { id: "location", name: "Sites" },
   { id: "felt", name: "Felt" },
   { id: "gear", name: "Gear" },
+  { id: "tuning", name: "Tuning" },
   { id: "research", name: "Research" },
 ] as const;
 type Tab = (typeof TABS)[number]["id"];
-const CHANNEL_TABS: Tab[] = ["model", "residue", "threshold"];
+const CHANNEL_TABS: Tab[] = ["model", "residue", "threshold", "tuning"];
 
 export function LabDashboard({ unprotected }: { unprotected: boolean }) {
   const { data: allData, setData, loading, error, reload, labelEvent } = useLabData();
@@ -32,6 +34,8 @@ export function LabDashboard({ unprotected }: { unprotected: boolean }) {
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const [thisDeviceOnly, setThisDeviceOnly] = useState(false);
   const [source, setSource] = useState<"mine" | "community">("mine");
+  // Bumped when learning settings are saved, so every panel recomputes with them.
+  const [configVersion, setConfigVersion] = useState(0);
   const community = useCommunityData();
   const pickSource = (s: "mine" | "community") => {
     setSource(s);
@@ -134,7 +138,7 @@ export function LabDashboard({ unprotected }: { unprotected: boolean }) {
         {loading && data.sessions.length === 0 ? (
           <p className="text-[11px] font-mono text-zinc-500">Loading this device&apos;s data…</p>
         ) : (
-          <>
+          <div key={configVersion} className="contents">
             {tab === "overview" && (
               <>
                 <OverviewPanel data={data} />
@@ -149,8 +153,9 @@ export function LabDashboard({ unprotected }: { unprotected: boolean }) {
             {tab === "location" && <LocationPanel data={data} />}
             {tab === "felt" && <FeltPanel data={data} />}
             {tab === "gear" && <GearPanel data={data} reload={reload} />}
+            {tab === "tuning" && <TuningPanel data={data} channel={channel} onSaved={() => setConfigVersion((v) => v + 1)} />}
             {tab === "research" && <ResearchPanel data={data} source={source} contributors={community.contributors} onReload={communityView ? community.load : reload} />}
-          </>
+          </div>
         )}
 
         <footer className="pt-2 text-center text-[10px] font-mono text-zinc-600 leading-relaxed">

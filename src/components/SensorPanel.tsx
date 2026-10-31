@@ -47,6 +47,8 @@ interface SensorPanelProps {
   included?: boolean;
   onToggleInclude?: () => void;
   toggleDisabled?: boolean; // e.g. EMF unexposed — can't be included
+  /** Extra live view (e.g. a 3D visual) shown under the trace while recording. */
+  extra?: ReactNode;
   sentry?: {
     armed: boolean;
     phase: SentryPhase;
@@ -67,6 +69,7 @@ export const SensorPanel = memo(function SensorPanel({
   included = true,
   onToggleInclude,
   toggleDisabled = false,
+  extra,
   sentry,
 }: SensorPanelProps) {
   const {
@@ -155,8 +158,19 @@ export const SensorPanel = memo(function SensorPanel({
     );
   }
 
+  // Sigma-reactive glow: invisible near baseline, building toward the threshold
+  // and blooming past it. Driven only by the live σ reading.
+  const ratio = status === "live" && threshold > 0 ? Math.min(Math.max(sigma, 0) / threshold, 1.6) : 0;
+  const glow = ratio > 0.25 ? 0.05 + 0.32 * Math.min(1, ((ratio - 0.25) / 0.75) ** 2) + (ratio > 1 ? 0.15 : 0) : 0;
+  const glowStyle = glow > 0
+    ? {
+        boxShadow: `inset 0 1px 0 rgba(255,255,255,0.06), inset 0 -1px 0 rgba(0,0,0,0.45), 0 2px 12px rgba(0,0,0,0.45), 0 0 ${Math.round(10 + glow * 40)}px ${hexToRgba(color, glow)}, inset 0 0 0 1px ${hexToRgba(color, glow * 0.9)}`,
+        transition: "box-shadow var(--t-2) var(--ease)",
+      }
+    : { transition: "box-shadow var(--t-2) var(--ease)" };
+
   return (
-    <div className={`panel-card rounded-lg p-3 flex flex-col gap-2 relative ${react ? "card-react" : ""}`}>
+    <div className={`panel-card rounded-lg p-3 flex flex-col gap-2 relative ${react ? "card-react" : ""}`} style={glowStyle}>
       {react && (
         <span
           aria-hidden
@@ -207,6 +221,8 @@ export const SensorPanel = memo(function SensorPanel({
           </>
         )}
       </div>
+
+      {extra}
 
       {/* Compact deviation meter */}
       <DeviationBar sigma={sigma} threshold={threshold} color={color} />

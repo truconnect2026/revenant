@@ -62,6 +62,7 @@ export function useMotion(
   const [mean, setMean] = useState(0);
   const [stddev, setStddev] = useState(0);
   const [history, setHistory] = useState<number[]>([]);
+  const [vector, setVector] = useState<[number, number, number] | null>(null);
   const [warmupProgress, setWarmupProgress] = useState(0);
   const [sentryPhase, setSentryPhase] = useState<SentryPhase>("off");
 
@@ -288,6 +289,7 @@ export function useMotion(
         setStddev(round2(dispBaseline.stddev));
         setWarmupProgress(dispBaseline.isWarmedUp ? 1 : Math.min(dispBaseline.sampleCount / warmupN, 1));
         setHistory(historyRef.current.slice());
+        setVector([round2(a.x), round2(a.y), round2(a.z)]);
       }
     }, 1000 / SAMPLE_HZ);
 
@@ -320,6 +322,7 @@ export function useMotion(
       setMean(0);
       setStddev(0);
       setHistory([]);
+      setVector(null);
       setWarmupProgress(0);
       setStatus("standby");
     }
@@ -338,6 +341,7 @@ export function useMotion(
     status,
     value,
     secondaryValue,
+    vector,
     unit: "m/s²",
     secondaryUnit: "°/s",
     sigma,

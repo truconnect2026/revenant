@@ -4,7 +4,8 @@ import { useState } from "react";
 interface Props {
   haptics: boolean;
   sound: boolean;
-  onToggle: (key: "haptics" | "sound", value: boolean) => void;
+  visuals3d: boolean;
+  onToggle: (key: "haptics" | "sound" | "visuals3d", value: boolean) => void;
 }
 
 function Toggle({ label, hint, checked, onChange }: { label: string; hint: string; checked: boolean; onChange: (v: boolean) => void }) {
@@ -32,7 +33,7 @@ function Toggle({ label, hint, checked, onChange }: { label: string; hint: strin
   );
 }
 
-export function SettingsControl({ haptics, sound, onToggle }: Props) {
+export function SettingsControl({ haptics, sound, visuals3d, onToggle }: Props) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -57,6 +58,10 @@ export function SettingsControl({ haptics, sound, onToggle }: Props) {
             </div>
             <Toggle label="Haptics" hint="Vibrate on anomaly" checked={haptics} onChange={(v) => onToggle("haptics", v)} />
             <Toggle label="Sound tick" hint="Quiet blip on anomaly" checked={sound} onChange={(v) => onToggle("sound", v)} />
+            <div className="px-2 pt-2 pb-1.5 text-[9px] font-display uppercase tracking-[0.18em] text-zinc-500 border-b border-zinc-800/80">
+              Display
+            </div>
+            <Toggle label="3D views" hint="Sound waterfall, motion and field arrows" checked={visuals3d} onChange={(v) => onToggle("visuals3d", v)} />
           </div>
         </>
       )}

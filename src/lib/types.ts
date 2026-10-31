@@ -146,4 +146,6 @@ export interface SensorReading {
   spectrum?: number[];
   threshold: number;
   warmupProgress: number; // 0–1; reaches 1 when baseline is ready
+  /** Latest raw x/y/z reading (motion: m/s² incl. gravity; EMF: µT), ~5 Hz. */
+  vector?: [number, number, number] | null;
 }

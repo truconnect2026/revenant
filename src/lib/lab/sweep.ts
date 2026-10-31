@@ -64,11 +64,11 @@ export function thresholdGrid(lo = 2, hi = 8, step = 0.25): number[] {
   return out;
 }
 
-export function sweep(input: SweepInput, grid = thresholdGrid()): SweepResult {
+export function sweep(input: SweepInput, grid = thresholdGrid(), cooldown = COOLDOWN_SLOTS): SweepResult {
   const nullHours = input.nullSeries.reduce((h, s) => h + observedHours(s), 0);
   const nStim = input.stimulusPeaks.length;
   const points = grid.map((threshold) => {
-    const falseTrips = input.nullSeries.reduce((n, s) => n + countTrips(s, threshold), 0);
+    const falseTrips = input.nullSeries.reduce((n, s) => n + countTrips(s, threshold, cooldown), 0);
     const ci = poissonCI(falseTrips);
     const detected = input.stimulusPeaks.filter((p) => p >= threshold).length;
     return {

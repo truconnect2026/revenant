@@ -41,7 +41,11 @@ export const MATCH_WINDOW_MS: [number, number] = [-2000, 4000];
  * unlabeled, or were previously auto-labeled, are touched — a human label is
  * never overwritten. Returns a new array only when something changed.
  */
-export function applyStimulusLabels(events: AnomalyEvent[], stimuli: StimulusMark[]): AnomalyEvent[] {
+export function applyStimulusLabels(
+  events: AnomalyEvent[],
+  stimuli: StimulusMark[],
+  windowMs: [number, number] = MATCH_WINDOW_MS
+): AnomalyEvent[] {
   let changed = false;
   const out = events.map((ev) => {
     const human = ev.label?.labeledBy === "human";
@@ -49,7 +53,7 @@ export function applyStimulusLabels(events: AnomalyEvent[], stimuli: StimulusMar
     const match = stimuli
       .filter((s) => {
         const dt = ev.timestamp - s.timestamp;
-        return dt >= MATCH_WINDOW_MS[0] && dt <= MATCH_WINDOW_MS[1];
+        return dt >= windowMs[0] && dt <= windowMs[1];
       })
       .sort((a, b) => Math.abs(ev.timestamp - a.timestamp) - Math.abs(ev.timestamp - b.timestamp))[0];
     if (!match) {

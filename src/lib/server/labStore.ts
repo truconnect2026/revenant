@@ -10,7 +10,7 @@
 import type { StoredSession } from "../idb";
 import { mergeSessions, type EncodedChunk } from "../lab/merge";
 
-export type DocKind = "gear" | "model" | "meta" | "post" | "spec" | "contributor";
+export type DocKind = "gear" | "model" | "meta" | "post" | "spec" | "contributor" | "config";
 export type StoreNamespace = "lab" | "community";
 
 export interface ChunkRef {

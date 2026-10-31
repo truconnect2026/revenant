@@ -10,6 +10,13 @@ import type { ModelVersion } from "../lab/model";
 import { buildSpec, type SpecSheet } from "../research/spec";
 import { draftPost, type ResearchPost } from "../research/writer";
 import type { LabStore } from "./labStore";
+import { normalizeConfig, type LearningConfig } from "../lab/config";
+
+/** The learning settings saved from the lab for server training (defaults if none). */
+export async function serverConfig(store: LabStore): Promise<LearningConfig> {
+  const doc = (await store.listDocs("config")).find((d) => d.id === "current") as Partial<LearningConfig> | undefined;
+  return normalizeConfig(doc ?? null);
+}
 
 export async function loadSeries(store: LabStore): Promise<SeriesMap> {
   const index = await store.chunkIndex();
@@ -45,16 +52,17 @@ export async function runCommunityTraining(store: LabStore, now = Date.now()) {
   const sessions = (await store.listSessions()) as LabSession[];
   const series = await loadSeries(store);
   const previous = (await store.listDocs("model")) as ModelVersion[];
+  const config = await serverConfig(store);
   const trained: ModelVersion[] = [];
   const notReady: string[] = [];
   for (const ch of CHANNELS) {
-    const out = trainChannel(ch, sessions, [...previous, ...trained]);
+    const out = trainChannel(ch, sessions, [...previous, ...trained], config);
     if (out.version) trained.push({ ...out.version, trainedAt: now });
     else notReady.push(`${ch}: needs ${out.readiness.missing.join(", ")}`);
   }
   if (trained.length) await store.upsertDocs("model", trained);
   const contributors = (await store.listDocs("contributor")).length;
-  const spec = buildSpec({ sessions, series, versions: [...previous, ...trained], source: "community", contributors, now });
+  const spec = buildSpec({ sessions, series, versions: [...previous, ...trained], source: "community", contributors, now, config });
   await saveSpec(store, spec);
   let draft: ResearchPost | null = null;
   if (sessions.length > 0) {

@@ -13,6 +13,7 @@ import {
 import { recommendThreshold } from "../lab/sweep";
 import type { ClassMetrics, ModelVersion } from "../lab/model";
 import { DEFAULT_THRESHOLDS } from "../lab/thresholds";
+import { DEFAULT_CONFIG, describeChanges, type LearningConfig } from "../lab/config";
 
 export interface ModelSummary {
   id: string;
@@ -65,18 +66,24 @@ export interface SpecSheet {
   gear: { device: string; stimulus: { k: number; n: number }; control: { k: number; n: number } }[];
   methods: string[];
   limitations: string[];
+  /** Learning settings the numbers were computed with. */
+  config?: LearningConfig;
 }
 
-export const MAX_FP_PER_HOUR = 1;
 
-const METHODS = [
-  "Each channel compares every reading with a rolling robust baseline (median and MAD) and records the deviation in σ.",
-  "Control sessions are recorded where nobody reports activity; their trip rate is the false-alarm rate.",
-  "Calibration sessions mark known physical events (knocks, voices, magnets); detection rate is how often a channel logged an event from 2 s before to 4 s after a mark.",
-  "Rates carry 95% intervals (Wilson for proportions, exact Poisson for counts). Comparisons between places use an exact conditional test with Benjamini–Hochberg correction.",
-  "Source models are k-nearest-neighbour classifiers on measured event features, scored leave-one-session-out, with an 'unknown' answer when nothing similar has been seen.",
-  "Felt-something marks are compared with 1,000 random re-timings within the same sessions.",
-];
+function methodsFor(c: LearningConfig): string[] {
+  const changes = describeChanges(c);
+  return [
+    "Each channel compares every reading with a rolling robust baseline (median and MAD) and records the deviation in σ.",
+    "Control sessions are recorded where nobody reports activity; their trip rate is the false-alarm rate.",
+    `Calibration sessions mark known physical events (knocks, voices, magnets); detection rate is how often a channel logged an event from ${Math.abs(c.stimulusWindow[0])} s before to ${c.stimulusWindow[1]} s after a mark.`,
+    "Rates carry 95% intervals (Wilson for proportions, exact Poisson for counts). Comparisons between places use an exact conditional test with Benjamini–Hochberg correction.",
+    `Source models are k-nearest-neighbour classifiers (k = ${c.k}, ${c.weighting} weighting) on measured event features, scored leave-one-session-out${c.rejectPercentile === null ? "" : `, answering 'unknown' when an event is further from anything known than the ${Math.round(c.rejectPercentile * 100)}th percentile of same-source distances`}.`,
+    `Suggested thresholds catch the most known stimuli with at most ${c.maxFpPerHour} false alarm${c.maxFpPerHour === 1 ? "" : "s"} per hour, replayed with a ${c.cooldownS} s cooldown.`,
+    "Felt-something marks are compared with 1,000 random re-timings within the same sessions.",
+    ...(changes.length ? [`Tuned settings (vs defaults): ${changes.join("; ")}.`] : []),
+  ];
+}
 
 function summarizeModel(v: ModelVersion | undefined): ModelSummary | null {
   if (!v) return null;
@@ -96,10 +103,12 @@ export interface SpecInput {
   source: "community" | "lab";
   contributors?: number;
   now?: number;
+  config?: LearningConfig;
 }
 
 export function buildSpec(input: SpecInput): SpecSheet {
   const { sessions, series } = input;
+  const config = input.config ?? DEFAULT_CONFIG;
   const now = input.now ?? Date.now();
   const o = overview(sessions, series);
   const maxH = (t: string) => {
@@ -115,10 +124,10 @@ export function buildSpec(input: SpecInput): SpecSheet {
   const channels = {} as Record<Channel, ChannelSpec>;
   for (const ch of CHANNELS) {
     const threshold = input.thresholds?.[ch] ?? DEFAULT_THRESHOLDS[ch];
-    const sw = thresholdSweep(ch, sessions, series);
+    const sw = thresholdSweep(ch, sessions, series, config);
     const at = sw.points.reduce<(typeof sw.points)[number] | null>(
       (best, p) => (!best || Math.abs(p.threshold - threshold) < Math.abs(best.threshold - threshold) ? p : best), null);
-    const rec = sw.nullHours > 0 && sw.nStimuli > 0 ? recommendThreshold(sw.points, MAX_FP_PER_HOUR) : null;
+    const rec = sw.nullHours > 0 && sw.nStimuli > 0 ? recommendThreshold(sw.points, config.maxFpPerHour) : null;
     const latest = input.versions.filter((v) => v.channel === ch).sort((a, b) => b.trainedAt - a.trainedAt)[0];
     channels[ch] = {
       threshold,
@@ -154,7 +163,7 @@ export function buildSpec(input: SpecInput): SpecSheet {
     gearMap.set(g.device, e);
   }
 
-  const cal = calibrationMatrix(sessions, series);
+  const cal = calibrationMatrix(sessions, series, config.stimulusWindow);
   const limitations: string[] = [];
   const nullH = Math.max(...CHANNELS.map((c) => channels[c].nullHours));
   if (nullH < 1) limitations.push(`Only ${(nullH * 60).toFixed(0)} minutes of control recording so far, so false-alarm rates are rough.`);
@@ -185,7 +194,8 @@ export function buildSpec(input: SpecInput): SpecSheet {
     places,
     felt,
     gear: Array.from(gearMap.entries()).map(([device, v]) => ({ device, ...v })),
-    methods: METHODS,
+    methods: methodsFor(config),
+    config,
     limitations,
   };
 }

@@ -10,6 +10,7 @@ import { runAroundPeak } from "@/lib/lab/features";
 import { applyStimulusLabels, expectedChannels } from "@/lib/lab/sources";
 import { DEFAULT_THRESHOLDS, loadThresholds } from "@/lib/lab/thresholds";
 import { getDeviceId } from "@/lib/lab/device";
+import { loadConfig } from "@/lib/lab/config";
 import type { ScoreListener } from "@/hooks/sensorOptions";
 import { hapticTap, soundTick } from "@/lib/feedback";
 import { useMagnetometer } from "@/hooks/useMagnetometer";
@@ -23,6 +24,8 @@ import { SettingsControl } from "./SettingsControl";
 import { FirstRunIntro } from "./FirstRunIntro";
 import { FieldControls, PlaceTypePicker, SessionTypePicker } from "./FieldControls";
 import { CommunityPanel } from "./CommunityPanel";
+import { SoundWaterfall3D } from "./viz/SoundWaterfall3D";
+import { Vector3D } from "./viz/Vector3D";
 
 const MAX_EVENTS = 200; // shown in the live log; the session record keeps every event
 const SCORE_FLUSH_MS = 15000;
@@ -46,6 +49,7 @@ export function Dashboard() {
   const [nowTs, setNowTs] = useState(0);
   const [haptics, setHaptics] = useState(true);
   const [soundCue, setSoundCue] = useState(false);
+  const [visuals3d, setVisuals3d] = useState(true);
   const [introSeen, setIntroSeen] = useState<boolean | null>(null);
   const [sentryArmed, setSentryArmed] = useState(false);
   const [sentryLevel, setSentryLevel] = useState<SentryLevel>("med");
@@ -110,6 +114,8 @@ export function Dashboard() {
       const lvl = localStorage.getItem("revenant.sentryLevel");
       if (h !== null) setHaptics(h === "1");
       if (s !== null) setSoundCue(s === "1");
+      const v3 = localStorage.getItem("revenant.visuals3d");
+      if (v3 !== null) setVisuals3d(v3 === "1");
       if (lvl === "low" || lvl === "med" || lvl === "high") setSentryLevel(lvl);
       const ch = localStorage.getItem("revenant.channels");
       if (ch) {
@@ -124,8 +130,11 @@ export function Dashboard() {
     }
   }, []);
 
-  const toggleSetting = useCallback((key: "haptics" | "sound", value: boolean) => {
-    if (key === "haptics") {
+  const toggleSetting = useCallback((key: "haptics" | "sound" | "visuals3d", value: boolean) => {
+    if (key === "visuals3d") {
+      setVisuals3d(value);
+      try { localStorage.setItem("revenant.visuals3d", value ? "1" : "0"); } catch {}
+    } else if (key === "haptics") {
       setHaptics(value);
       try { localStorage.setItem("revenant.haptics", value ? "1" : "0"); } catch {}
     } else {
@@ -201,7 +210,8 @@ export function Dashboard() {
   // Replace the session's events: keep the full list in the ref (that's what
   // gets saved), show only the newest MAX_EVENTS live, and persist.
   const commitEvents = useCallback((next: AnomalyEvent[], newClips: Map<string, Blob> = new Map()) => {
-    const labeled = applyStimulusLabels(next, stimuliRef.current);
+    const win = loadConfig().stimulusWindow;
+    const labeled = applyStimulusLabels(next, stimuliRef.current, [win[0] * 1000, win[1] * 1000]);
     eventsRef.current = labeled;
     setEvents((prev) => {
       const shown = labeled.slice(-MAX_EVENTS);
@@ -474,7 +484,7 @@ export function Dashboard() {
             >
               {running ? "Stop" : "Start Session"}
             </button>
-            <SettingsControl haptics={haptics} sound={soundCue} onToggle={toggleSetting} />
+            <SettingsControl haptics={haptics} sound={soundCue} visuals3d={visuals3d} onToggle={toggleSetting} />
           </div>
         </header>
 
@@ -531,6 +541,9 @@ export function Dashboard() {
             included={channelOn.emf}
             onToggleInclude={() => toggleChannel("emf")}
             toggleDisabled={emf.status === "no-channel"}
+            extra={visuals3d && running && emf.status === "live" ? (
+              <Vector3D vector={emf.vector} scale={60} color="#22d3ee" unit="µT" caption="Magnetic field direction (phone frame)" />
+            ) : undefined}
             noChannelMessage="Not exposed by this browser. Use Chrome/Edge on Android over HTTPS, or pair an external Bluetooth magnetometer on iPhone."
           />
           <SensorPanel
@@ -542,6 +555,7 @@ export function Dashboard() {
             pulseId={latestByChannel.sound}
             included={channelOn.sound}
             onToggleInclude={() => toggleChannel("sound")}
+            extra={visuals3d && running && sound.status === "live" ? <SoundWaterfall3D spectrum={sound.spectrum} /> : undefined}
           />
           <SensorPanel
             title="Motion"
@@ -552,6 +566,9 @@ export function Dashboard() {
             pulseId={latestByChannel.motion}
             included={channelOn.motion}
             onToggleInclude={() => toggleChannel("motion")}
+            extra={visuals3d && running && motion.status === "live" ? (
+              <Vector3D vector={motion.vector} scale={9.81} color="#fbbf24" unit="m/s²" caption="Gravity + movement (phone frame)" />
+            ) : undefined}
             sentry={
               running
                 ? {

@@ -13,6 +13,9 @@
 import type { AnomalyEvent, Channel } from "../types";
 import { median, percentile } from "./stats";
 import { trainingSource } from "./sources";
+import { DEFAULT_CONFIG, type LearningConfig } from "./config";
+
+export type ModelOptions = Pick<LearningConfig, "k" | "weighting" | "rejectPercentile">;
 
 export const UNKNOWN = "unknown";
 export const K = 5;
@@ -67,13 +70,32 @@ export interface Row {
   y: string;
 }
 
-export function trainingRows(sessions: { id: string; events: AnomalyEvent[] }[], channel: Channel): Row[] {
+/** Indices of the features the config leaves switched on for a channel. */
+export function featureMask(channel: Channel, config: Pick<LearningConfig, "disabledFeatures"> = DEFAULT_CONFIG): number[] {
+  const off = new Set(config.disabledFeatures[channel] ?? []);
+  const idx = FEATURE_NAMES[channel].map((n, i) => (off.has(n) ? -1 : i)).filter((i) => i >= 0);
+  // Never allow an empty model: fall back to every feature.
+  return idx.length ? idx : FEATURE_NAMES[channel].map((_, i) => i);
+}
+
+/** The event's feature vector restricted to the enabled features. */
+export function maskedVector(ev: AnomalyEvent, config: Pick<LearningConfig, "disabledFeatures"> = DEFAULT_CONFIG): number[] | null {
+  const x = featureVector(ev);
+  if (!x) return null;
+  return featureMask(ev.channel, config).map((i) => x[i]);
+}
+
+export function trainingRows(
+  sessions: { id: string; events: AnomalyEvent[] }[],
+  channel: Channel,
+  config: Pick<LearningConfig, "disabledFeatures"> = DEFAULT_CONFIG
+): Row[] {
   const rows: Row[] = [];
   for (const s of sessions) {
     for (const ev of s.events) {
       if (ev.channel !== channel) continue;
       const y = trainingSource(ev);
-      const x = featureVector(ev);
+      const x = maskedVector(ev, config);
       if (y && x) rows.push({ id: ev.id, sessionId: s.id, x, y });
     }
   }
@@ -123,10 +145,10 @@ export interface FittedKnn {
 
 /**
  * Fit: scale features, then learn how far apart same-source events usually are.
- * The reject distance is the 95th percentile of each training event's distance
- * to its nearest same-source neighbour.
+ * The reject distance is a percentile (95th by default) of each training
+ * event's distance to its nearest same-source neighbour.
  */
-export function fitKnn(rows: Row[]): FittedKnn {
+export function fitKnn(rows: Row[], opts: Pick<ModelOptions, "rejectPercentile"> = DEFAULT_CONFIG): FittedKnn {
   const scaler = fitScaler(rows.map((r) => r.x));
   const X = rows.map((r) => scale(scaler, r.x));
   const y = rows.map((r) => r.y);
@@ -140,7 +162,7 @@ export function fitKnn(rows: Row[]): FittedKnn {
   }
   // With no same-class pairs there is no basis for "close enough": reject nothing
   // by distance, but confidence will still be low.
-  const rejectDistance = nn.length ? percentile(nn, 0.95) : Infinity;
+  const rejectDistance = nn.length && opts.rejectPercentile !== null ? percentile(nn, opts.rejectPercentile) : Infinity;
   return { scaler, X, y, rejectDistance };
 }
 
@@ -150,7 +172,8 @@ export interface Prediction {
   distance: number;
 }
 
-export function predict(model: FittedKnn, x: number[], k = K): Prediction {
+export function predict(model: FittedKnn, x: number[], opts: Pick<ModelOptions, "k" | "weighting"> = DEFAULT_CONFIG): Prediction {
+  const k = opts.k ?? K;
   const q = scale(model.scaler, x);
   const nbrs = model.X.map((p, i) => ({ d: dist(p, q), y: model.y[i] }))
     .sort((a, b) => a.d - b.d)
@@ -160,7 +183,7 @@ export function predict(model: FittedKnn, x: number[], k = K): Prediction {
   const votes = new Map<string, number>();
   let total = 0;
   for (const n of nbrs) {
-    const w = 1 / (n.d + 1e-6);
+    const w = opts.weighting === "uniform" ? 1 : 1 / (n.d + 1e-6);
     votes.set(n.y, (votes.get(n.y) ?? 0) + w);
     total += w;
   }
@@ -187,10 +210,16 @@ export interface Readiness {
   missing: string[];
 }
 
-export function readiness(rows: Row[]): Readiness {
+export function readiness(
+  rows: Row[],
+  mins: Pick<LearningConfig, "minRows" | "minClasses" | "minSessions"> = DEFAULT_CONFIG
+): Readiness {
   const classes = new Set(rows.map((r) => r.y)).size;
   const sessions = new Set(rows.map((r) => r.sessionId)).size;
   const missing: string[] = [];
+  const MIN_ROWS = mins.minRows;
+  const MIN_CLASSES = mins.minClasses;
+  const MIN_SESSIONS = mins.minSessions;
   if (rows.length < MIN_ROWS) missing.push(`${MIN_ROWS - rows.length} more labeled events`);
   if (classes < MIN_CLASSES) missing.push(`${MIN_CLASSES - classes} more distinct source${MIN_CLASSES - classes > 1 ? "s" : ""}`);
   if (sessions < MIN_SESSIONS) missing.push(`${MIN_SESSIONS - sessions} more session${MIN_SESSIONS - sessions > 1 ? "s" : ""} with labels`);
@@ -220,7 +249,7 @@ export interface Evaluation {
 }
 
 /** Leave-one-session-out cross-validation. */
-export function crossValidate(rows: Row[]): Evaluation {
+export function crossValidate(rows: Row[], opts: ModelOptions = DEFAULT_CONFIG): Evaluation {
   const sessions = Array.from(new Set(rows.map((r) => r.sessionId)));
   const labels = Array.from(new Set(rows.map((r) => r.y))).sort();
   const predLabels = [...labels, UNKNOWN];
@@ -236,12 +265,12 @@ export function crossValidate(rows: Row[]): Evaluation {
     const test = rows.filter((r) => r.sessionId === s);
     if (train.length === 0 || test.length === 0) continue;
     folds++;
-    const model = fitKnn(train);
+    const model = fitKnn(train, opts);
     const counts = new Map<string, number>();
     for (const r of train) counts.set(r.y, (counts.get(r.y) ?? 0) + 1);
     const majority = Array.from(counts.entries()).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0][0];
     for (const r of test) {
-      const p = predict(model, r.x);
+      const p = predict(model, r.x, opts);
       const i = labels.indexOf(r.y);
       const j = predLabels.indexOf(p.source);
       confusion[i][j >= 0 ? j : predLabels.length - 1]++;
@@ -295,4 +324,36 @@ export interface ModelVersion {
   /** Share of ALL events on this channel still unexplained after this run. */
   residue: number;
   totalEvents: number;
+  /** Learning settings this version was trained with. */
+  config?: LearningConfig;
+}
+
+export interface Importance {
+  feature: string;
+  /** Accuracy drop when this feature is left out (positive = the feature helps). */
+  drop: number;
+  accuracyWithout: number;
+}
+
+/**
+ * Drop-column importance: re-run the same cross-validation with each enabled
+ * feature removed. Honest and model-agnostic; cost is one CV per feature.
+ */
+export function featureImportance(rows: Row[], names: string[], opts: ModelOptions = DEFAULT_CONFIG): { base: number; items: Importance[] } {
+  const base = crossValidate(rows, opts).accuracy;
+  if (names.length < 2) return { base, items: [] };
+  const items = names.map((feature, j) => {
+    const reduced = rows.map((r) => ({ ...r, x: r.x.filter((_, i) => i !== j) }));
+    const acc = crossValidate(reduced, opts).accuracy;
+    return { feature, drop: base - acc, accuracyWithout: acc };
+  });
+  return { base, items: items.sort((a, b) => b.drop - a.drop) };
+}
+
+/** Accuracy and "unknown" rate for each k, everything else fixed. */
+export function kSweep(rows: Row[], opts: ModelOptions = DEFAULT_CONFIG, ks = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15]) {
+  return ks.map((k) => {
+    const e = crossValidate(rows, { ...opts, k });
+    return { k, accuracy: e.accuracy, rejectRate: e.rejectRate };
+  });
 }

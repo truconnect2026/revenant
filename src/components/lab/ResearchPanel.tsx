@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { LabSession } from "@/lib/lab/analysis";
 import { loadThresholds } from "@/lib/lab/thresholds";
+import { loadConfig } from "@/lib/lab/config";
 import { buildSpec } from "@/lib/research/spec";
 import { draftPost, fillUrl, postToMarkdown, socialText, type ResearchPost } from "@/lib/research/writer";
 import { Panel } from "./panels";
@@ -61,6 +62,7 @@ export function ResearchPanel({
       thresholds: loadThresholds(),
       source: source === "community" ? "community" : "lab",
       contributors: source === "community" ? contributors : undefined,
+      config: loadConfig(),
     }),
     [data, source, contributors]
   );

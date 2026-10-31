@@ -32,6 +32,7 @@ export function useMagnetometer(
   const [mean, setMean] = useState(0);
   const [stddev, setStddev] = useState(0);
   const [history, setHistory] = useState<number[]>([]);
+  const [vector, setVector] = useState<[number, number, number] | null>(null);
   const [warmupProgress, setWarmupProgress] = useState(0);
 
   const baselineRef = useRef(new RollingBaseline(WINDOW_SIZE, WARMUP));
@@ -145,6 +146,7 @@ export function useMagnetometer(
         setStddev(Math.round(baseline.stddev * 100) / 100);
         setWarmupProgress(baseline.isWarmedUp ? 1 : Math.min(baseline.sampleCount / WARMUP, 1));
         setHistory(historyRef.current.slice());
+        setVector([Math.round(r.x * 10) / 10, Math.round(r.y * 10) / 10, Math.round(r.z * 10) / 10]);
       }
     }, 1000 / SAMPLE_HZ);
 
@@ -171,6 +173,7 @@ export function useMagnetometer(
       setMean(0);
       setStddev(0);
       setHistory([]);
+      setVector(null);
       setWarmupProgress(0);
       setStatus("standby");
     }
@@ -193,6 +196,7 @@ export function useMagnetometer(
     history,
     threshold,
     warmupProgress,
+    vector,
     enable,
     recalibrate,
   };
